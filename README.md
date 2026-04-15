@@ -15,9 +15,35 @@ Camera-tracked jersey overlay. Uses [MediaPipe Pose](https://google.github.io/me
 
 ## Push to your repo: [WadeSalmon/FanSync](https://github.com/WadeSalmon/FanSync)
 
-The remote is empty; push from your Mac (Terminal or Cursor’s terminal) — this environment may not be allowed to write `.git` on your Desktop.
+Push from your Mac (Terminal or Cursor’s terminal) — some automated environments may not be allowed to write `.git` on your Desktop.
 
-In **`MammothSKULL`**:
+### Ongoing workflow (repo already set up)
+
+Pull remote changes **before** you commit or push so your branch stays in sync:
+
+```bash
+cd ~/Desktop/MammothSKULL
+git pull origin main
+git add .
+git commit -m "Describe your change"
+git push origin main
+```
+
+If you prefer a linear history and you’ve only made local commits (no merge commits from others yet), you can use:
+
+```bash
+git pull --rebase origin main
+```
+
+Resolve any conflicts Git reports, then `git push origin main`.
+
+**Shortcut:** from this folder, `./sync-and-push.sh "Your commit message"` runs pull → stage all → commit (only if there are changes) → push. For a rebase pull: `REBASE=1 ./sync-and-push.sh "Your commit message"`.
+
+### First-time setup (new clone or new folder)
+
+If you **cloned** the repo, `origin` and `main` already exist — use the ongoing workflow above (start with `git pull`).
+
+If this folder is **not** a git repo yet:
 
 ```bash
 cd ~/Desktop/MammothSKULL

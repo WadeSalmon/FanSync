@@ -1,0 +1,1182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voodoo Doll Skeleton Tracking</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.7.0/p5.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+    <script type="module">
+        // Ensure MediaPipe is available globally
+        window.MediaPipeReady = false;
+        window.addEventListener('load', () => {
+            if (typeof Pose !== 'undefined' && typeof Camera !== 'undefined') {
+                window.MediaPipeReady = true;
+            }
+        });
+    </script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #1a1a1a;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            z-index: 10;
+            background: rgba(26, 26, 26, 0.8);
+            padding: 10px 20px;
+            border-radius: 8px;
+        }
+        #info h2 {
+            margin: 5px 0;
+            font-size: 20px;
+        }
+        #info p {
+            margin: 5px 0;
+            font-size: 14px;
+        }
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .status {
+            color: #4CAF50;
+        }
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 15px;
+            background: rgba(42, 42, 42, 0.9);
+            border-radius: 8px;
+            z-index: 10;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        select {
+            background: #555;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            margin: 5px;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">
+        <h2>Halloween Body Tracking</h2>
+        <p>Stand in front of the camera to animate your Halloween Character</p>
+        <p id="status" class="status">Loading pose detection model...</p>
+    </div>
+
+    <div id="controls">
+        <button onclick="toggleSkeleton()">Toggle Skeleton</button>
+        <button onclick="toggleVideo()">Toggle Video</button>
+        <button onclick="toggleDebug()">Toggle Debug Info</button>
+        <select id="cameraSelect" onchange="switchCamera()" title="Select Camera" aria-label="Select Camera">
+            <option value="">Select Camera...</option>
+        </select>
+    </div>
+
+    <script>
+        // ====================================================================
+        // BODY TRACKING CHARACTER OVERLAY SYSTEM
+        // ====================================================================
+        // This application uses MediaPipe Pose to detect body positions
+        // from a webcam feed and overlays custom character images that follow
+        // the detected skeleton movements.
+        //
+        //  KEY CUSTOMIZATION POINTS:
+        //
+        //  SCALE ADJUSTMENTS:
+        //    - Line 584: Head size multiplier (default 1.0x shoulder width)
+        //    - Line 630-631: Limb dimensions (auto-scales to skeleton distance)
+        //    - Line 141: Global scale variable (currently unused but available)
+        //
+        // ROTATION ADJUSTMENTS:
+        //    - Line 548-551: Right arm rotation offset (default -45 degrees)
+        //    - Line 558-561: Left arm rotation offset (default -135 degrees)
+        //    - Line 572-574: Torso rotation offset (default -90 degrees)
+        //    - Line 611: Automatic angle calculation in drawLimb()
+        //    - Line 638: Final rotation applied (angle + offset)
+        //
+        //  IMAGE LOADING:
+        //    - Lines 159-178: Preload character images from 'images' folder
+        //
+        //  DRAWING ORDER (affects layering):
+        //    - Lines 520-591: Legs → Arms → Torso → Head (back to front)
+        //
+        // ====================================================================
+        // GLOBAL VARIABLES
+        // ====================================================================
+
+        let video;              // Webcam video capture
+        let pose;               // MediaPipe Pose object
+        let poses = [];         // Array of detected poses (people) in the frame
+        let smoothedPoses = []; // Smoothed poses to reduce flickering
+        let connections;        // Skeleton connection data (which keypoints connect)
+        let currentCameraId = null;  // Currently selected camera device ID
+        let lastValidPose = null;    // Last valid pose when detection is lost
+        let poseTimeout = 0;         // Counter for how long pose has been missing
+        const MAX_POSE_TIMEOUT = 10; // Frames to keep last pose before hiding (about 1/6 second at 60fps)
+        const SMOOTHING_FACTOR = 0.3; // How much to blend between old and new positions (0-1, lower = smoother)
+        let videoElement;       // HTML video element for MediaPipe
+        let camera;             // MediaPipe camera object
+
+        // ====================================================================
+        // CHARACTER IMAGE STORAGE
+        // Supports BOTH full limbs (single image per arm/leg)
+        // AND segmented limbs (upper/lower sections)
+        // ====================================================================
+        let CharacterImages = {
+            // Head
+            head: null,
+            
+            // Torso
+            torso: null,
+            
+            // Full limbs (if you have whole arm/leg images)
+            leftArm: null,
+            rightArm: null,
+            leftLeg: null,
+            rightLeg: null,
+            
+            // Segmented limbs (for more detailed animation)
+            leftUpperArm: null,
+            leftLowerArm: null,
+            rightUpperArm: null,
+            rightLowerArm: null,
+            leftUpperLeg: null,
+            leftLowerLeg: null,
+            rightUpperLeg: null,
+            rightLowerLeg: null
+        };
+        
+        // ====================================================================
+        // DISPLAY SETTINGS
+        // ====================================================================
+        let showSkeleton = true;    // Toggle to show/hide skeleton overlay
+        let showVideo = true;        // Toggle to show/hide video feed
+        let showDebug = false;       // Toggle to show/hide debug information
+        let voodooScale = 2.5;       //  SCALE: Global scale multiplier (currently unused but available)
+        let imagesLoaded = false;    // Flag to check if images are loaded
+
+        // ====================================================================
+        // PRELOAD FUNCTION
+        // Called before setup() - loads all assets before the app starts
+        // ====================================================================
+        function preload() {
+            // ============================================
+            // LOAD CHARACTER IMAGES FROM SENIOR JERSEY FOLDER
+            // ============================================
+            // Path to Senior Jersey folder on Desktop
+            // If server is started from Desktop: use 'Senior Jersey/'
+            // If server is started from HalloweenProject: use '../../../../Senior Jersey/'
+            // Adjust based on where you start your HTTP server
+            const jerseyPath = '../../../../Senior Jersey/';
+            
+            // Head (optional - will be null if not found)
+            // CharacterImages.head = loadImage(jerseyPath + 'head.png');
+            
+            // Torso
+            CharacterImages.torso = loadImage(jerseyPath + 'TORSO.png');
+            
+            // Segmented arms from Senior Jersey
+            CharacterImages.leftUpperArm = loadImage(jerseyPath + 'MammothJersey_LU ARM.png');
+            CharacterImages.leftLowerArm = loadImage(jerseyPath + 'MammothJersey_LL ARM.png');
+            CharacterImages.rightUpperArm = loadImage(jerseyPath + 'RU ARM.png');
+            CharacterImages.rightLowerArm = loadImage(jerseyPath + 'MammothJersey_RL ARM.png');
+            
+            // Segmented legs from Senior Jersey
+            CharacterImages.leftUpperLeg = loadImage(jerseyPath + 'LU LEG.png');
+            CharacterImages.leftLowerLeg = loadImage(jerseyPath + 'LL LEG.png');
+            CharacterImages.rightUpperLeg = loadImage(jerseyPath + 'RU LEG.png');
+            CharacterImages.rightLowerLeg = loadImage(jerseyPath + 'RL LEG.png');
+            
+            imagesLoaded = true;
+        }
+
+        // ====================================================================
+        // SETUP FUNCTION
+        // Called once at startup - initializes the canvas and starts camera
+        // ====================================================================
+        function setup() {
+            createCanvas(windowWidth, windowHeight);
+            imageMode(CENTER);      // Images are drawn from their center point
+            angleMode(RADIANS);     // Use radians for rotation calculations
+
+            // Define MediaPipe Pose skeleton connections
+            // MediaPipe Pose has 33 keypoints, these are the main connections
+            connections = [
+                [0, 1], [1, 2], [2, 3], [3, 7],    // Face
+                [0, 4], [4, 5], [5, 6], [6, 8],    // Face
+                [9, 10],                             // Shoulders
+                [11, 12], [11, 13], [13, 15],       // Left arm
+                [12, 14], [14, 16],                  // Right arm
+                [11, 23], [12, 24],                  // Torso
+                [23, 24],                            // Hips
+                [23, 25], [25, 27],                  // Left leg
+                [24, 26], [26, 28],                  // Right leg
+                [27, 29], [29, 31],                  // Left foot
+                [28, 30], [30, 32]                   // Right foot
+            ];
+
+            // Wait for MediaPipe to load, then initialize
+            if (typeof Pose !== 'undefined') {
+                initializeMediaPipe();
+            } else {
+                // Wait a bit and try again
+                setTimeout(() => {
+                    if (typeof Pose !== 'undefined') {
+                        initializeMediaPipe();
+                    } else {
+                        document.getElementById('status').textContent = 'Error: MediaPipe failed to load';
+                        console.error('MediaPipe Pose library not found');
+                    }
+                }, 1000);
+            }
+
+            // Populate the camera dropdown menu
+            getCameraList();
+
+            // Start video capture from the default camera
+            startCamera();
+        }
+
+        // ====================================================================
+        // INITIALIZE MEDIAPIPE POSE
+        // Sets up MediaPipe Pose detection
+        // ====================================================================
+        function initializeMediaPipe() {
+            // Wait for MediaPipe to be available
+            if (typeof Pose === 'undefined') {
+                console.error('MediaPipe Pose not loaded. Please check script tags.');
+                document.getElementById('status').textContent = 'Error: MediaPipe not loaded';
+                return;
+            }
+
+            pose = new Pose({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+                }
+            });
+
+            pose.setOptions({
+                modelComplexity: 1,
+                smoothLandmarks: true,
+                enableSegmentation: false,
+                smoothSegmentation: false,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            pose.onResults(onResults);
+        }
+
+        // ====================================================================
+        // WINDOW RESIZE HANDLER
+        // Automatically adjusts canvas when browser window is resized
+        // ====================================================================
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight);
+        }
+
+        // ====================================================================
+        // CAMERA LIST FUNCTION
+        // Populates the camera dropdown with all available video input devices
+        // ====================================================================
+        async function getCameraList() {
+            try {
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+                const select = document.getElementById('cameraSelect');
+                select.innerHTML = '<option value="">Select Camera...</option>';
+
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${index + 1}`;
+                    select.appendChild(option);
+                });
+            } catch (err) {
+                console.error('Error getting camera list:', err);
+            }
+        }
+
+        // ====================================================================
+        // CAMERA START FUNCTION
+        // Starts video capture from the specified camera device
+        // ====================================================================
+        function startCamera(deviceId = null) {
+            // Stop existing video stream if any
+            if (video && video.elt && video.elt.srcObject) {
+                video.elt.srcObject.getTracks().forEach(track => track.stop());
+                video.remove();
+            }
+            if (camera) {
+                camera.stop();
+            }
+
+            // Set video constraints (resolution and device)
+            const constraints = deviceId
+                ? { video: { deviceId: { exact: deviceId }, width: 640, height: 480 } }
+                : { video: { width: 640, height: 480 } };
+
+            video = createCapture(constraints);
+            video.size(640, 480);
+            video.hide();  // Hide the default video element (we draw it manually)
+
+            // Wait for video to load before starting pose detection
+            video.elt.addEventListener('loadeddata', () => {
+                console.log('Video loaded, starting pose detection');
+                console.log('Video actual dimensions:', video.elt.videoWidth, 'x', video.elt.videoHeight);
+                
+                // Wait for MediaPipe to be initialized
+                if (pose && typeof Camera !== 'undefined') {
+                    // Start MediaPipe camera
+                    videoElement = video.elt;
+                    camera = new Camera(videoElement, {
+                        onFrame: async () => {
+                            await pose.send({image: videoElement});
+                        },
+                        width: 640,
+                        height: 480
+                    });
+                    camera.start();
+                    
+                    document.getElementById('status').textContent = 'Skeleton tracking active! Step back so your full body is visible.';
+                } else {
+                    document.getElementById('status').textContent = 'Waiting for MediaPipe to initialize...';
+                    setTimeout(() => {
+                        if (pose && typeof Camera !== 'undefined') {
+                            videoElement = video.elt;
+                            camera = new Camera(videoElement, {
+                                onFrame: async () => {
+                                    await pose.send({image: videoElement});
+                                },
+                                width: 640,
+                                height: 480
+                            });
+                            camera.start();
+                            document.getElementById('status').textContent = 'Skeleton tracking active! Step back so your full body is visible.';
+                        }
+                    }, 500);
+                }
+            });
+
+            currentCameraId = deviceId;
+        }
+
+        // ====================================================================
+        // CAMERA SWITCH FUNCTION
+        // Called when user selects a different camera from the dropdown
+        // ====================================================================
+        function switchCamera() {
+            const select = document.getElementById('cameraSelect');
+            const deviceId = select.value;
+
+            if (deviceId) {
+                startCamera(deviceId);
+            }
+        }
+
+        // ====================================================================
+        // FILE INPUT CREATION (Optional - for dynamic image upload)
+        // Creates a button that allows users to upload images at runtime
+        // ====================================================================
+        function createFileInput(callback) {
+            let input = document.createElement('input');
+            input.type = 'file';
+            input.multiple = true;
+            input.accept = 'image/png,image/jpg,image/jpeg';
+            input.style.display = 'none';
+            input.id = 'fileInput';
+            document.body.appendChild(input);
+
+            let uploadBtn = document.createElement('button');
+            uploadBtn.textContent = 'Upload Body Part Images';
+            uploadBtn.style.background = '#555';
+            uploadBtn.onclick = () => input.click();
+            document.getElementById('controls').appendChild(uploadBtn);
+
+            input.onchange = callback;
+        }
+
+        // ====================================================================
+        // FILE HANDLER
+        // Auto-detects body parts from filename and loads images
+        // ====================================================================
+        function handleFiles(event) {
+            let files = event.target.files;
+            
+            for (let i = 0; i < files.length; i++) {
+                let file = files[i];
+                let filename = file.name.toLowerCase();
+                
+                loadImage(URL.createObjectURL(file), (img) => {
+                    // Auto-detect body part from filename
+                    if (filename.includes('head')) {
+                        CharacterImages.head = img;
+                    } else if (filename.includes('torso') || filename.includes('body')) {
+                        CharacterImages.torso = img;
+                    }
+                    // Full limbs
+                    else if (filename.includes('leftarm') && !filename.includes('upper') && !filename.includes('lower')) {
+                        CharacterImages.leftArm = img;
+                    } else if (filename.includes('rightarm') && !filename.includes('upper') && !filename.includes('lower')) {
+                        CharacterImages.rightArm = img;
+                    } else if (filename.includes('leftleg') && !filename.includes('upper') && !filename.includes('lower')) {
+                        CharacterImages.leftLeg = img;
+                    } else if (filename.includes('rightleg') && !filename.includes('upper') && !filename.includes('lower')) {
+                        CharacterImages.rightLeg = img;
+                    }
+                    // Segmented arms
+                    else if (filename.includes('leftupperarm') || filename.includes('left_upper_arm')) {
+                        CharacterImages.leftUpperArm = img;
+                    } else if (filename.includes('leftlowerarm') || filename.includes('left_lower_arm') || filename.includes('leftforearm')) {
+                        CharacterImages.leftLowerArm = img;
+                    } else if (filename.includes('rightupperarm') || filename.includes('right_upper_arm')) {
+                        CharacterImages.rightUpperArm = img;
+                    } else if (filename.includes('rightlowerarm') || filename.includes('right_lower_arm') || filename.includes('rightforearm')) {
+                        CharacterImages.rightLowerArm = img;
+                    }
+                    // Segmented legs
+                    else if (filename.includes('leftupperleg') || filename.includes('left_upper_leg') || filename.includes('leftthigh')) {
+                        CharacterImages.leftUpperLeg = img;
+                    } else if (filename.includes('leftlowerleg') || filename.includes('left_lower_leg') || filename.includes('leftcalf')) {
+                        CharacterImages.leftLowerLeg = img;
+                    } else if (filename.includes('rightupperleg') || filename.includes('right_upper_leg') || filename.includes('rightthigh')) {
+                        CharacterImages.rightUpperLeg = img;
+                    } else if (filename.includes('rightlowerleg') || filename.includes('right_lower_leg') || filename.includes('rightcalf')) {
+                        CharacterImages.rightLowerLeg = img;
+                    }
+                    
+                    imagesLoaded = true;
+                    updateStatus();
+                });
+            }
+        }
+
+        // ====================================================================
+        // STATUS UPDATE
+        // Updates the UI to show which body parts have been loaded
+        // ====================================================================
+        function updateStatus() {
+            let loadedParts = [];
+            for (let key in CharacterImages) {
+                if (CharacterImages[key]) loadedParts.push(key);
+            }
+            document.getElementById('status').textContent = `Loaded ${loadedParts.length} parts: ${loadedParts.join(', ')}`;
+        }
+
+        // ====================================================================
+        // MAIN DRAW LOOP
+        // Called every frame (typically 60fps) - handles all rendering
+        // ====================================================================
+        function draw() {
+            background(30);  // Dark gray background
+
+            // SCALE: Calculate video scaling to maintain aspect ratio
+            // This ensures the video fills the canvas without distortion
+            let videoAspect = video.width / video.height;
+            let canvasAspect = width / height;
+            let scaleX, scaleY, offsetX, offsetY;
+
+            if (videoAspect > canvasAspect) {
+                // Video is wider - fit to height
+                scaleY = height / video.height;
+                scaleX = scaleY;
+                offsetX = (width - video.width * scaleX) / 2;
+                offsetY = 0;
+            } else {
+                // Video is taller - fit to width
+                scaleX = width / video.width;
+                scaleY = scaleX;
+                offsetX = 0;
+                offsetY = (height - video.height * scaleY) / 2;
+            }
+
+            // Draw the video feed (flipped horizontally for mirror effect)
+            if (showVideo && video && video.loadedmetadata) {
+                push();
+                imageMode(CORNER);
+                translate(width, 0);  // Move to right edge
+                scale(-1, 1);         // Flip horizontally for mirror effect
+                tint(255, 100);       // Semi-transparent video overlay
+                image(video, offsetX, offsetY, video.width * scaleX, video.height * scaleY);
+                pop();
+            }
+
+            // SCALE: Apply scaling and offset to character overlay
+            // This ensures character parts align perfectly with the video
+            push();
+            translate(offsetX, offsetY);  // Center the content
+            scale(scaleX, scaleY);        // Scale to match video
+            imageMode(CENTER);            // Draw images from center point
+
+            // Loop through all detected people in the frame (use smoothed poses to reduce flickering)
+            const posesToRender = smoothedPoses.length > 0 ? smoothedPoses : poses;
+            for (let i = 0; i < posesToRender.length; i++) {
+                let pose = posesToRender[i];
+
+                // Draw skeleton overlay (green lines and red dots)
+                if (showSkeleton) {
+                    drawSkeleton(pose);
+                    drawKeypoints(pose);
+                }
+
+                // Map character images to the skeleton
+                if (imagesLoaded) {
+                    mapVoodooToSkeleton(pose);
+                }
+
+                // Draw debug information (measurements, angles, etc.)
+                if (showDebug) {
+                    drawDebugInfo(pose);
+                }
+            }
+
+            pop();  // Restore previous drawing state
+
+            // Display pose detection status
+            displayInfo();
+        }
+
+        // ====================================================================
+        // MEDIAPIPE RESULTS CALLBACK
+        // Called by MediaPipe whenever new poses are detected
+        // ====================================================================
+        function onResults(results) {
+            // Convert MediaPipe results to our format
+            const convertedPoses = convertMediaPipeResults(results);
+            gotPoses(convertedPoses);
+        }
+
+        // ====================================================================
+        // CONVERT MEDIAPIPE RESULTS
+        // Converts MediaPipe pose landmarks to our expected format
+        // ====================================================================
+        function convertMediaPipeResults(results) {
+            if (!results.poseLandmarks || results.poseLandmarks.length === 0) {
+                return [];
+            }
+
+            // MediaPipe keypoint index mapping to our keypoint names
+            const keypointMap = {
+                0: 'nose',
+                2: 'left_eye',
+                5: 'right_eye',
+                7: 'left_ear',
+                8: 'right_ear',
+                11: 'left_shoulder',
+                12: 'right_shoulder',
+                13: 'left_elbow',
+                14: 'right_elbow',
+                15: 'left_wrist',
+                16: 'right_wrist',
+                23: 'left_hip',
+                24: 'right_hip',
+                25: 'left_knee',
+                26: 'right_knee',
+                27: 'left_ankle',
+                28: 'right_ankle'
+            };
+
+            const keypoints = [];
+            const landmarks = results.poseLandmarks;
+            // Get video dimensions from the actual video element
+            const videoWidth = video && video.elt ? video.elt.videoWidth : 640;
+            const videoHeight = video && video.elt ? video.elt.videoHeight : 480;
+
+            // Convert MediaPipe landmarks to our keypoint format
+            // MediaPipe returns normalized coordinates (0-1), convert to pixels
+            for (let i = 0; i < landmarks.length; i++) {
+                const landmark = landmarks[i];
+                const name = keypointMap[i];
+                
+                if (name) {
+                    keypoints.push({
+                        name: name,
+                        x: landmark.x * videoWidth,
+                        y: landmark.y * videoHeight,
+                        confidence: landmark.visibility !== undefined ? landmark.visibility : (landmark.presence !== undefined ? landmark.presence : 1.0)
+                    });
+                }
+            }
+
+            return [{
+                keypoints: keypoints
+            }];
+        }
+
+        // ====================================================================
+        // POSE DETECTION CALLBACK
+        // Processes converted pose data and applies smoothing
+        // ====================================================================
+        function gotPoses(results) {
+            poses = results;  // Update global poses array
+            
+            // If we have a valid pose, update lastValidPose and reset timeout
+            if (results.length > 0 && results[0].keypoints && results[0].keypoints.length > 0) {
+                lastValidPose = JSON.parse(JSON.stringify(results[0])); // Deep copy
+                poseTimeout = 0;
+                
+                // Smooth the pose data to reduce flickering
+                smoothPoses(results);
+                
+                if (results.length > 0) {
+                    console.log('Poses detected:', results.length, 'Keypoints:', results[0].keypoints.length);
+                }
+            } else {
+                // No pose detected - increment timeout
+                poseTimeout++;
+                
+                // If we have a last valid pose and haven't timed out, use it
+                if (lastValidPose && poseTimeout < MAX_POSE_TIMEOUT) {
+                    smoothedPoses = [lastValidPose];
+                } else {
+                    smoothedPoses = [];
+                }
+            }
+        }
+        
+        // ====================================================================
+        // SMOOTH POSE DATA
+        // Interpolates between previous and current poses to reduce flickering
+        // ====================================================================
+        function smoothPoses(newPoses) {
+            if (newPoses.length === 0) {
+                smoothedPoses = [];
+                return;
+            }
+            
+            // If we don't have previous smoothed poses, use current poses directly
+            if (smoothedPoses.length === 0) {
+                smoothedPoses = JSON.parse(JSON.stringify(newPoses)); // Deep copy
+                return;
+            }
+            
+            // Smooth each pose
+            smoothedPoses = newPoses.map((newPose, poseIndex) => {
+                const oldPose = smoothedPoses[poseIndex] || newPose;
+                const smoothedPose = {
+                    keypoints: newPose.keypoints.map((newKp, kpIndex) => {
+                        const oldKp = oldPose.keypoints[kpIndex] || newKp;
+                        
+                        // Only smooth if confidence is high enough
+                        if (newKp.confidence > 0.3) {
+                            return {
+                                name: newKp.name,
+                                x: oldKp.x + (newKp.x - oldKp.x) * (1 - SMOOTHING_FACTOR),
+                                y: oldKp.y + (newKp.y - oldKp.y) * (1 - SMOOTHING_FACTOR),
+                                confidence: newKp.confidence
+                            };
+                        } else if (oldKp.confidence > 0.3) {
+                            // If new keypoint has low confidence but old one is good, fade it out slowly
+                            return {
+                                name: oldKp.name,
+                                x: oldKp.x,
+                                y: oldKp.y,
+                                confidence: oldKp.confidence * 0.95 // Gradually reduce confidence
+                            };
+                        } else {
+                            // Both are low confidence, use new one
+                            return newKp;
+                        }
+                    })
+                };
+                return smoothedPose;
+            });
+        }
+
+        // ====================================================================
+        // SKELETON DRAWER
+        // Draws green lines connecting body keypoints
+        // ====================================================================
+        function drawSkeleton(pose) {
+            stroke(0, 255, 0);  // Green color
+            strokeWeight(2);
+
+            // Loop through all skeleton connections
+            for (let i = 0; i < connections.length; i++) {
+                let connection = connections[i];
+                let a = connection[0];  // Start keypoint index
+                let b = connection[1];  // End keypoint index
+
+                let keypoints = pose.keypoints;
+                let keypointA = keypoints[a];
+                let keypointB = keypoints[b];
+
+                // Only draw if both keypoints are detected with sufficient confidence
+                // Lowered threshold to reduce flickering
+                if (keypointA.confidence > 0.25 && keypointB.confidence > 0.25) {
+                    line(keypointA.x, keypointA.y, keypointB.x, keypointB.y);
+                }
+            }
+        }
+
+        // ====================================================================
+        // KEYPOINT DRAWER
+        // Draws red circles on each detected body keypoint
+        // ====================================================================
+        function drawKeypoints(pose) {
+            for (let j = 0; j < pose.keypoints.length; j++) {
+                let keypoint = pose.keypoints[j];
+
+                // Only draw keypoints with sufficient confidence
+                // Lowered threshold to reduce flickering
+                if (keypoint.confidence > 0.25) {
+                    fill(255, 0, 0);  // Red color
+                    noStroke();
+                    circle(keypoint.x, keypoint.y, 6);
+                }
+            }
+        }
+
+        // ====================================================================
+        // MAP CHARACTER TO SKELETON
+        // This is the main function that positions and scales character parts
+        // to match the detected skeleton pose
+        // ====================================================================
+        function mapVoodooToSkeleton(pose) {
+            // ================================================================
+            // STEP 1: Get all body keypoints from the detected pose
+            // Each keypoint has x, y coordinates and a confidence score
+            // ================================================================
+            let nose = getKeypoint(pose, 'nose');
+            let leftShoulder = getKeypoint(pose, 'left_shoulder');
+            let rightShoulder = getKeypoint(pose, 'right_shoulder');
+            let leftElbow = getKeypoint(pose, 'left_elbow');
+            let rightElbow = getKeypoint(pose, 'right_elbow');
+            let leftWrist = getKeypoint(pose, 'left_wrist');
+            let rightWrist = getKeypoint(pose, 'right_wrist');
+            let leftHip = getKeypoint(pose, 'left_hip');
+            let rightHip = getKeypoint(pose, 'right_hip');
+            let leftKnee = getKeypoint(pose, 'left_knee');
+            let rightKnee = getKeypoint(pose, 'right_knee');
+            let leftAnkle = getKeypoint(pose, 'left_ankle');
+            let rightAnkle = getKeypoint(pose, 'right_ankle');
+
+            // ================================================================
+            // STEP 2: Draw body parts in correct layering order (back to front)
+            // Drawing order matters for proper visual overlap
+            // ================================================================
+
+            // ================================================================
+            // LEGS (drawn first - behind everything else)
+            // ================================================================
+
+            // Right leg - checks
+            if (CharacterImages.rightUpperLeg && CharacterImages.rightLowerLeg) {
+                // Segmented: upper leg (hip to knee) and lower leg (knee to ankle)
+                drawLimb(CharacterImages.rightUpperLeg, rightHip, rightKnee);
+                drawLimb(CharacterImages.rightLowerLeg, rightKnee, rightAnkle);
+            } else if (CharacterImages.rightLeg) {
+                // Full limb: single image from hip to ankle
+                drawLimb(CharacterImages.rightLeg, rightHip, rightAnkle);
+            }
+
+            // Left leg - same logic as right leg
+            if (CharacterImages.leftUpperLeg && CharacterImages.leftLowerLeg) {
+                drawLimb(CharacterImages.leftUpperLeg, leftHip, leftKnee);
+                drawLimb(CharacterImages.leftLowerLeg, leftKnee, leftAnkle);
+            } else if (CharacterImages.leftLeg) {
+                drawLimb(CharacterImages.leftLeg, leftHip, leftAnkle);
+            }
+
+     
+            // ================================================================
+            // TORSO (drawn behind arms)
+            // ================================================================
+            if (CharacterImages.torso && leftShoulder && rightShoulder && leftHip && rightHip) {
+                let shoulderMid = getMidpoint(leftShoulder, rightShoulder);
+                let hipMid = getMidpoint(leftHip, rightHip);
+                // ROTATION: -90 degrees aligns vertical torso image correctly
+                // Change this if your torso image has a different default orientation
+                drawLimb(CharacterImages.torso, shoulderMid, hipMid, radians(-90));
+            }
+
+       // ================================================================
+            // ARMS (drawn in front of torso)
+            // ================================================================
+
+            // Right arm
+            if (CharacterImages.rightUpperArm && CharacterImages.rightLowerArm) {
+                // ROTATION: -45 degrees compensates for how the arm image was designed
+                // Adjust this value if your arm images point in a different direction
+                drawLimb(CharacterImages.rightUpperArm, rightShoulder, rightElbow, radians(-45));
+                drawLimb(CharacterImages.rightLowerArm, rightElbow, rightWrist, radians(-45));
+            } else if (CharacterImages.rightArm) {
+                drawLimb(CharacterImages.rightArm, rightShoulder, rightWrist, radians(-45));
+            }
+
+            // Left arm
+            if (CharacterImages.leftUpperArm && CharacterImages.leftLowerArm) {
+                // ROTATION: -135 degrees for left arm orientation
+                // This mirrors the right arm adjustment for the opposite side
+                drawLimb(CharacterImages.leftUpperArm, leftShoulder, leftElbow, radians(-135));
+                drawLimb(CharacterImages.leftLowerArm, leftElbow, leftWrist, radians(-135));
+            } else if (CharacterImages.leftArm) {
+                drawLimb(CharacterImages.leftArm, leftShoulder, leftWrist, radians(-135));
+            }
+
+
+            // ================================================================
+            // HEAD (drawn on top of everything)
+            // ================================================================
+            if (CharacterImages.head && nose && leftShoulder && rightShoulder) {
+                let shoulderDist = getDistance(leftShoulder, rightShoulder);
+                // ⚙️ SCALE: Head size is 1.0x the shoulder width
+                // Increase multiplier (e.g., 1.5) for bigger head, decrease (e.g., 0.8) for smaller
+                let headSize = shoulderDist * 1.0;
+
+                push();
+                translate(nose.x, nose.y);  // Position at nose keypoint
+                image(CharacterImages.head, 0, 0, headSize, headSize);
+                pop();
+            }
+        }
+
+        // ====================================================================
+        // DRAW LIMB FUNCTION
+        // This is the CORE function that handles positioning, rotation, and scaling
+        // of all body part images to match the skeleton
+        // ====================================================================
+        // Parameters:
+        //   img - The image to draw
+        //   startPoint - Starting keypoint (e.g., shoulder for arm)
+        //   endPoint - Ending keypoint (e.g., wrist for arm)
+        //   rotationOffset - Additional rotation in radians to align image orientation
+        // ====================================================================
+        function drawLimb(img, startPoint, endPoint, rotationOffset = 0) {
+            if (!img || !startPoint || !endPoint) return;
+
+            // ================================================================
+            // STEP 1: Calculate the angle between start and end points
+            // ROTATION: This determines how much to rotate the image
+            // ================================================================
+            let angle = atan2(endPoint.y - startPoint.y, endPoint.x - startPoint.x);
+
+            // ================================================================
+            // STEP 2: Calculate distance between points
+            // SCALE: This determines the length of the limb
+            // ================================================================
+            let distance = getDistance(startPoint, endPoint);
+
+            // ================================================================
+            // STEP 3: Find midpoint between start and end
+            // This is where the image will be centered
+            // ================================================================
+            let midPoint = getMidpoint(startPoint, endPoint);
+
+            // ================================================================
+            // STEP 4: Calculate image dimensions while maintaining aspect ratio
+            // SCALE: The limb automatically scales to match skeleton distance
+            // ================================================================
+            let aspectRatio = img.width / img.height;  // Original image proportions
+            let limbWidth = distance;                   // Width matches skeleton distance
+            let limbHeight = limbWidth / aspectRatio;   // Height maintains proportions
+
+            // ================================================================
+            // STEP 5: Draw the image with calculated position, rotation, and scale
+            // ================================================================
+            push();
+            translate(midPoint.x, midPoint.y);          // Move to limb center
+            rotate(angle + rotationOffset);             // 🔄 Rotate to match skeleton angle + offset
+            image(img, 0, 0, limbWidth, limbHeight);    // ⚙️ Draw with calculated dimensions
+            pop();
+        }
+
+        // ====================================================================
+        // HELPER: GET KEYPOINT
+        // Retrieves a specific body keypoint by name if confidence is high enough
+        // ====================================================================
+        function getKeypoint(pose, name) {
+            let keypoint = pose.keypoints.find(kp => kp.name === name);
+            // Lowered threshold to 25% to reduce flickering when keypoints are temporarily lost
+            if (keypoint && keypoint.confidence > 0.25) {
+                return keypoint;
+            }
+            return null;
+        }
+
+        // ====================================================================
+        // HELPER: GET DISTANCE
+        // Calculates the pixel distance between two keypoints
+        // Used for scaling limbs and head
+        // ====================================================================
+        function getDistance(kp1, kp2) {
+            if (kp1 && kp2) {
+                return dist(kp1.x, kp1.y, kp2.x, kp2.y);
+            }
+            return 0;
+        }
+
+        // ====================================================================
+        // HELPER: GET MIDPOINT
+        // Calculates the center point between two keypoints
+        // Used for positioning limbs and torso
+        // ====================================================================
+        function getMidpoint(kp1, kp2) {
+            if (kp1 && kp2) {
+                return {
+                    x: (kp1.x + kp2.x) / 2,
+                    y: (kp1.y + kp2.y) / 2
+                };
+            }
+            return null;
+        }
+
+        function displayInfo() {
+            fill(255);
+            noStroke();
+            textAlign(LEFT);
+            textSize(14);
+
+            // Use smoothed poses for display to match what's being rendered
+            const posesToCheck = smoothedPoses.length > 0 ? smoothedPoses : poses;
+            let detectionCount = posesToCheck.length;
+            text('Detected poses: ' + detectionCount, 10, 20);
+
+            if (detectionCount === 0) {
+                fill(255, 200, 0);
+                text('⚠ Step back so your FULL BODY is visible', 10, 45);
+            } else if (posesToCheck.length > 0) {
+                // Show which body parts are currently visible
+                let pose = posesToCheck[0];
+                let visibleParts = [];
+                let bodyParts = ['nose', 'left_shoulder', 'right_shoulder', 'left_hip', 'right_hip',
+                                'left_elbow', 'right_elbow', 'left_wrist', 'right_wrist',
+                                'left_knee', 'right_knee', 'left_ankle', 'right_ankle'];
+
+                bodyParts.forEach(part => {
+                    if (getKeypoint(pose, part)) {
+                        visibleParts.push(part);
+                    }
+                });
+
+                fill(100, 255, 100);
+                textSize(12);
+                text('Visible parts: ' + visibleParts.length + '/13', 10, 45);
+
+                // Show scale info based on shoulder width
+                let leftShoulder = getKeypoint(pose, 'left_shoulder');
+                let rightShoulder = getKeypoint(pose, 'right_shoulder');
+                if (leftShoulder && rightShoulder) {
+                    let shoulderWidth = getDistance(leftShoulder, rightShoulder).toFixed(0);
+                    text('Body scale: ' + shoulderWidth + 'px', 10, 65);
+                }
+            }
+
+            if (!imagesLoaded) {
+                fill(255, 200, 0);
+                text('⚠ No voodoo doll images loaded', 10, 85);
+            }
+        }
+
+        function drawDebugInfo(pose) {
+            // Get all important keypoints
+            let nose = getKeypoint(pose, 'nose');
+            let leftShoulder = getKeypoint(pose, 'left_shoulder');
+            let rightShoulder = getKeypoint(pose, 'right_shoulder');
+            let leftHip = getKeypoint(pose, 'left_hip');
+            let rightHip = getKeypoint(pose, 'right_hip');
+            let leftElbow = getKeypoint(pose, 'left_elbow');
+            let rightElbow = getKeypoint(pose, 'right_elbow');
+            let leftWrist = getKeypoint(pose, 'left_wrist');
+            let rightWrist = getKeypoint(pose, 'right_wrist');
+            let leftKnee = getKeypoint(pose, 'left_knee');
+            let rightKnee = getKeypoint(pose, 'right_knee');
+            let leftAnkle = getKeypoint(pose, 'left_ankle');
+            let rightAnkle = getKeypoint(pose, 'right_ankle');
+
+            // Calculate torso connection points
+            let shoulderMid = leftShoulder && rightShoulder ? getMidpoint(leftShoulder, rightShoulder) : null;
+            let hipMid = leftHip && rightHip ? getMidpoint(leftHip, rightHip) : null;
+
+            // Draw torso anchor points (larger circles)
+            if (shoulderMid) {
+                fill(255, 255, 0);
+                noStroke();
+                circle(shoulderMid.x, shoulderMid.y, 15);
+                fill(0);
+                textAlign(CENTER);
+                textSize(10);
+                text('Torso Top', shoulderMid.x, shoulderMid.y - 15);
+            }
+
+            if (hipMid) {
+                fill(255, 255, 0);
+                noStroke();
+                circle(hipMid.x, hipMid.y, 15);
+                fill(0);
+                textAlign(CENTER);
+                textSize(10);
+                text('Torso Bottom', hipMid.x, hipMid.y + 25);
+            }
+
+            // Draw shoulder connection points (where arms connect)
+            if (leftShoulder) {
+                fill(0, 255, 255);
+                noStroke();
+                circle(leftShoulder.x, leftShoulder.y, 12);
+                fill(255);
+                textAlign(LEFT);
+                textSize(10);
+                text('L ARM', leftShoulder.x + 10, leftShoulder.y);
+            }
+
+            if (rightShoulder) {
+                fill(0, 255, 255);
+                noStroke();
+                circle(rightShoulder.x, rightShoulder.y, 12);
+                fill(255);
+                textAlign(RIGHT);
+                textSize(10);
+                text('R ARM', rightShoulder.x - 10, rightShoulder.y);
+            }
+
+            // Draw hip connection points (where legs connect)
+            if (leftHip) {
+                fill(255, 0, 255);
+                noStroke();
+                circle(leftHip.x, leftHip.y, 12);
+                fill(255);
+                textAlign(LEFT);
+                textSize(10);
+                text('L LEG', leftHip.x + 10, leftHip.y);
+            }
+
+            if (rightHip) {
+                fill(255, 0, 255);
+                noStroke();
+                circle(rightHip.x, rightHip.y, 12);
+                fill(255);
+                textAlign(RIGHT);
+                textSize(10);
+                text('R LEG', rightHip.x - 10, rightHip.y);
+            }
+
+            // Draw head position
+            if (nose) {
+                fill(255, 100, 100);
+                noStroke();
+                circle(nose.x, nose.y, 12);
+                fill(255);
+                textAlign(CENTER);
+                textSize(10);
+                text('HEAD', nose.x, nose.y - 15);
+            }
+
+            // Draw distance measurements
+            textAlign(LEFT);
+            fill(255);
+            textSize(12);
+            let yOffset = 100;
+
+            if (leftShoulder && rightShoulder) {
+                let shoulderWidth = getDistance(leftShoulder, rightShoulder).toFixed(1);
+                text('Shoulder Width: ' + shoulderWidth + 'px', 10, yOffset);
+                yOffset += 20;
+            }
+
+            if (shoulderMid && hipMid) {
+                let torsoLength = getDistance(shoulderMid, hipMid).toFixed(1);
+                text('Torso Length: ' + torsoLength + 'px', 10, yOffset);
+                yOffset += 20;
+            }
+
+            if (leftShoulder && leftElbow) {
+                let upperArmLength = getDistance(leftShoulder, leftElbow).toFixed(1);
+                text('L Upper Arm: ' + upperArmLength + 'px', 10, yOffset);
+                yOffset += 20;
+            }
+
+            if (leftHip && leftKnee) {
+                let upperLegLength = getDistance(leftHip, leftKnee).toFixed(1);
+                text('L Upper Leg: ' + upperLegLength + 'px', 10, yOffset);
+                yOffset += 20;
+            }
+
+            // Show torso rotation angle
+            if (shoulderMid && hipMid) {
+                let torsoAngle = atan2(hipMid.y - shoulderMid.y, hipMid.x - shoulderMid.x);
+                let torsoDegrees = (torsoAngle * 180 / PI).toFixed(1);
+                text('Torso Angle: ' + torsoDegrees + '°', 10, yOffset);
+                yOffset += 20;
+
+                // Draw a line showing torso angle
+                push();
+                stroke(255, 255, 0);
+                strokeWeight(3);
+                line(shoulderMid.x, shoulderMid.y, hipMid.x, hipMid.y);
+                pop();
+            }
+        }
+
+        // ====================================================================
+        // UI TOGGLE FUNCTIONS
+        // These control what is displayed on screen
+        // ====================================================================
+        function toggleSkeleton() {
+            showSkeleton = !showSkeleton;  // Show/hide green skeleton overlay
+        }
+
+        function toggleVideo() {
+            showVideo = !showVideo;  // Show/hide video feed
+        }
+
+        function toggleDebug() {
+            showDebug = !showDebug;  // Show/hide debug measurements and angles
+        }
+
+        // ====================================================================
+        // SCALE ADJUSTMENT FUNCTION
+        // SCALE: Adjusts global scale (currently unused, but available)
+        // To use this, multiply limbWidth and limbHeight in drawLimb() by voodooScale
+        // ====================================================================
+        function adjustScale(amount) {
+            voodooScale = constrain(voodooScale + amount, 0.5, 5.0);
+        }
+
+        // ====================================================================
+        // KEYBOARD CONTROLS
+        // Provides alternative controls to the on-screen buttons
+        // ====================================================================
+        function keyPressed() {
+            if (key === 's' || key === 'S') toggleSkeleton();  // Toggle skeleton
+            if (key === 'v' || key === 'V') toggleVideo();     // Toggle video
+            if (key === 'd' || key === 'D') toggleDebug();     // Toggle debug
+            if (key === '+' || key === '=') adjustScale(0.1);  // Scale up
+            if (key === '-' || key === '_') adjustScale(-0.1); // Scale down
+        }
+    </script>
+</body>
+</html>
