@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MammothSKULL — Skeleton character overlay</title>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1a1a1a;
+      overflow: hidden;
+      font-family: 'Space Mono', monospace;
+      color: #e0e0e0;
+    }
+    video { display: none; }
+    #canvas {
+      display: block;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      transform-origin: center center;
+    }
+    #hud {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      pointer-events: none;
+      z-index: 10;
+      transform-origin: center center;
+    }
+    #title {
+      position: fixed;
+      top: 20px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: rgba(220, 210, 200, 0.9);
+    }
+    #status {
+      position: fixed;
+      bottom: 24px; left: 50%;
+      transform: translateX(-50%);
+      font-size: 10px;
+      letter-spacing: 0.15em;
+      color: rgba(200, 190, 180, 0.8);
+    }
+    #status-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: #c44;
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    #status-dot.tracking {
+      background: #6a6;
+    }
+    #splash {
+      position: fixed;
+      inset: 0;
+      background: #1a1a1a;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      gap: 16px;
+    }
+    #splash.hidden { opacity: 0; pointer-events: none; transition: opacity 0.6s; }
+    #splash h1 {
+      font-size: clamp(24px, 4vw, 42px);
+      letter-spacing: 0.1em;
+      color: #e8e0d8;
+    }
+    #splash h1 span { color: #c9a86c; }
+    #splash p {
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      color: rgba(200, 190, 180, 0.7);
+      text-transform: uppercase;
+      text-align: center;
+    }
+    #start-btn {
+      margin-top: 12px;
+      padding: 12px 32px;
+      border: 1px solid rgba(201, 168, 108, 0.6);
+      background: transparent;
+      color: #c9a86c;
+      font-family: inherit;
+      font-size: 11px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      cursor: pointer;
+      pointer-events: all;
+    }
+    #start-btn:hover {
+      background: rgba(201, 168, 108, 0.15);
+      color: #e8e0d8;
+    }
+    #slider-panel {
+      position: fixed;
+      right: 16px;
+      top: 16px;
+      width: 260px;
+      max-height: calc(100vh - 32px);
+      overflow: auto;
+      background: rgba(0, 0, 0, 0.65);
+      border: 1px solid rgba(201, 168, 108, 0.45);
+      border-radius: 10px;
+      padding: 12px;
+      z-index: 120;
+      color: #e8e0d8;
+      font-size: 11px;
+      letter-spacing: 0.03em;
+      backdrop-filter: blur(3px);
+    }
+    #slider-panel.panel-hidden {
+      display: none;
+    }
+    #slider-panel h3 {
+      font-size: 12px;
+      margin-bottom: 8px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #c9a86c;
+    }
+    .slider-row {
+      margin-bottom: 8px;
+    }
+    .slider-row label {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 2px;
+    }
+    .slider-row input[type="range"] {
+      width: 100%;
+    }
+    #slider-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    #slider-actions button {
+      flex: 1;
+      border: 1px solid rgba(201, 168, 108, 0.6);
+      background: rgba(201, 168, 108, 0.12);
+      color: #e8e0d8;
+      font-family: inherit;
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 8px 6px;
+      cursor: pointer;
+    }
+    #slider-actions button:hover {
+      background: rgba(201, 168, 108, 0.24);
+    }
+  </style>
+</head>
+<body>
+  <video id="video" playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div id="slider-panel"></div>
+  <div id="hud">
+    <div id="title">MammothSKULL</div>
+    <div id="status"><span id="status-dot"></span><span id="status-text">Enable camera to start</span></div>
+  </div>
+  <div id="splash">
+    <h1>Mammoth<span>SKULL</span></h1>
+    <p>Camera skeleton tracking · Senior Jersey character</p>
+    <p style="font-size:10px; opacity:0.8;">Local: <code style="background:rgba(0,0,0,0.3); padding:2px 6px;">python3 -m http.server 8080</code> in this folder · <strong>Space</strong> hides controls</p>
+    <button id="start-btn">Enable camera</button>
+  </div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const backgroundImg = new Image();
+    backgroundImg.crossOrigin = 'anonymous';
+    backgroundImg.src = 'Senior Jersey/Background.png';
+
+    let poseDetector = null;
+    let cameraUtil = null;
+    let viewW = window.innerWidth;
+    let viewH = window.innerHeight;
+
+    const SMOOTHING = 0.28;
+    const joints = {};
+    const lastValid = {};
+    const jointTimeout = {};
+    const MAX_TIMEOUT = 12;
+
+    // Character image sets (run server from Desktop so both folders are served)
+    const seniorPath = 'Senior Jersey/';
+    const awayPath = 'Senior Jersey/AwayJersey/';
+    const awayVersion = Date.now(); // force-refresh Away Jersey assets
+    const awayAsset = (file) => `${awayPath}${file}?v=${awayVersion}`;
+
+    const imagePathsSenior = {
+      head: seniorPath + 'Head.png',
+      torso: seniorPath + 'Mammoth_TORSO.png',
+      leftUpperArm: seniorPath + 'Mammoth_LU ARM.png',
+      leftLowerArm: seniorPath + 'MammothJersey_LL ARM.png',
+      rightUpperArm: seniorPath + 'Mammoth_RU ARM.png',
+      rightLowerArm: seniorPath + 'MammothJersey_RL ARM.png',
+      leftUpperLeg: seniorPath + 'LU LEG.png',
+      leftLowerLeg: seniorPath + 'LL LEG.png',
+      rightUpperLeg: seniorPath + 'RU LEG.png',
+      rightLowerLeg: seniorPath + 'RL LEG.png',
+      leftGlove: seniorPath + 'L GLOVE.png',
+      rightGlove: seniorPath + 'MammothJersey_R GLOVE.png',
+      leftSkate: seniorPath + 'L SKATE.png',
+      rightSkate: seniorPath + 'R SKATE.png'
+    };
+
+    const imagePathsAway = {
+      head: awayAsset('Head.png'),
+      torso: awayAsset('TORSO.png'),
+      leftUpperArm: awayAsset('LU ARM.png'),
+      leftLowerArm: awayAsset('LL ARM.png'),
+      rightUpperArm: awayAsset('RU ARM.png'),
+      rightLowerArm: awayAsset('RL ARM.png'),
+      leftUpperLeg: awayAsset('LU LEG.png'),
+      leftLowerLeg: awayAsset('LL LEG.png'),
+      rightUpperLeg: awayAsset('RU LEG.png'),
+      rightLowerLeg: awayAsset('RL LEG.png'),
+      leftGlove: awayAsset('L GLOVE.png'),
+      rightGlove: awayAsset('R GLOVE.png'),
+      leftSkate: awayAsset('L SKATE.png'),
+      rightSkate: awayAsset('R SKATE.png')
+    };
+
+    const imagesSenior = {};
+    const imagesAway = {};
+    let loadedSenior = 0;
+    let loadedAway = 0;
+    const totalSenior = Object.keys(imagePathsSenior).length;
+    const totalAway = Object.keys(imagePathsAway).length;
+    let jerseyMode = 'auto'; // 'auto' | 'senior' | 'away'
+    let displayLayout = 'fullscreen'; // 'fullscreen' | 'vertical'
+
+    // Blue color tracking (#61a1d5) — overlay when similar blue is detected
+    const BLUE_TARGET = { r: 97, g: 161, b: 213 }; // #61a1d5
+    const BLUE_TOLERANCE = 95;   // max RGB distance to count as "blue"
+    const BLUE_THRESHOLD = 0.015; // fraction of sampled pixels that must be blue to trigger (1.5%)
+    const blueOverlayImg = new Image();
+    blueOverlayImg.crossOrigin = 'anonymous';
+    blueOverlayImg.src = 'blue-overlay.png';
+    let blueDetected = false;
+    let blueDetectedSmoothed = 0;
+    let lastBlueRatio = 0;
+    let blueSampleSkip = 0;
+    const BLUE_SMOOTH = 0.2;
+    const BLUE_SAMPLE_INTERVAL = 4;
+    const BLUE_TOL_SQ = BLUE_TOLERANCE * BLUE_TOLERANCE;
+    let colorSampleCanvas, colorSampleCtx;
+    const SAMPLE_SIZE = 80;    // sample grid 80x80 for speed
+
+    function isBlueLike(r, g, b) {
+      const dr = r - BLUE_TARGET.r, dg = g - BLUE_TARGET.g, db = b - BLUE_TARGET.b;
+      return dr * dr + dg * dg + db * db <= BLUE_TOL_SQ;
+    }
+
+    // Joints are in viewport pixels (innerWidth × innerHeight)
+    function canvasToSample(jointX, jointY, vw, vh) {
+      const normX = 1 - jointX / vw;
+      const normY = jointY / vh;
+      return {
+        x: Math.max(0, Math.min(SAMPLE_SIZE - 1, normX * SAMPLE_SIZE)),
+        y: Math.max(0, Math.min(SAMPLE_SIZE - 1, normY * SAMPLE_SIZE))
+      };
+    }
+
+    // Sample blue in a tight upper-chest window (centered between shoulders, upper ~¼ of torso only).
+    function sampleVideoForBlue(ls, rs, lh, rh, vw, vh) {
+      if (!video.videoWidth || !video.videoHeight || !vw || !vh) return 0;
+      if (!ls || !rs || !lh || !rh) return 0;
+
+      if (!colorSampleCanvas) {
+        colorSampleCanvas = document.createElement('canvas');
+        colorSampleCanvas.width = SAMPLE_SIZE;
+        colorSampleCanvas.height = SAMPLE_SIZE;
+        colorSampleCtx = colorSampleCanvas.getContext('2d');
+      }
+      colorSampleCtx.drawImage(video, 0, 0, video.videoWidth, video.videoHeight, 0, 0, SAMPLE_SIZE, SAMPLE_SIZE);
+      const data = colorSampleCtx.getImageData(0, 0, SAMPLE_SIZE, SAMPLE_SIZE).data;
+
+      const sLs = canvasToSample(ls.x, ls.y, vw, vh);
+      const sRs = canvasToSample(rs.x, rs.y, vw, vh);
+      const sLh = canvasToSample(lh.x, lh.y, vw, vh);
+      const sRh = canvasToSample(rh.x, rh.y, vw, vh);
+      const shoulderY = Math.min(sLs.y, sRs.y);
+      const hipY = Math.max(sLh.y, sRh.y);
+      const torsoHeight = Math.max(hipY - shoulderY, 1e-6);
+      const midX = (sLs.x + sRs.x) * 0.5;
+      const shoulderSpan = Math.abs(sRs.x - sLs.x);
+      const halfW = Math.max(3, shoulderSpan * 0.18);
+      const minSx = Math.max(0, Math.floor(midX - halfW));
+      const maxSx = Math.min(SAMPLE_SIZE - 1, Math.ceil(midX + halfW));
+      const y0 = shoulderY + torsoHeight * 0.06;
+      const y1 = shoulderY + torsoHeight * 0.28;
+      const minSy = Math.max(0, Math.floor(y0));
+      const maxSy = Math.min(SAMPLE_SIZE - 1, Math.ceil(y1));
+      if (minSx > maxSx || minSy > maxSy) return 0;
+
+      let matchCount = 0;
+      let totalSampled = 0;
+      const step = 2;
+      for (let y = Math.floor(minSy); y <= maxSy; y += step) {
+        for (let x = Math.floor(minSx); x <= maxSx; x += step) {
+          const i = (y * SAMPLE_SIZE + x) * 4;
+          totalSampled++;
+          if (isBlueLike(data[i], data[i + 1], data[i + 2])) matchCount++;
+        }
+      }
+      return totalSampled > 0 ? matchCount / totalSampled : 0;
+    }
+
+    function loadImageSet(imagePaths, target, onLoaded) {
+      Object.entries(imagePaths).forEach(([key, path]) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => { onLoaded && onLoaded(); };
+        img.onerror = () => console.warn('Failed to load:', path);
+        img.src = path;
+        target[key] = img;
+      });
+    }
+
+    // Load both sets: Away is default, Senior appears when blue detected
+    loadImageSet(imagePathsAway, imagesAway, () => { loadedAway++; });
+    loadImageSet(imagePathsSenior, imagesSenior, () => { loadedSenior++; });
+
+    const LIMB_ROTATIONS = {
+      leftUpperArm: -90, leftLowerArm: -90, rightUpperArm: -90, rightLowerArm: -90,
+      leftUpperLeg: -90, leftLowerLeg: -90, rightUpperLeg: -90, rightLowerLeg: -90,
+      torso: -90, leftGlove: -90, rightGlove: -90, leftSkate: -90, rightSkate: -90
+    };
+    const SCALE_MULTIPLIERS = {
+      global: 1.0,
+      leftUpperArm: 0.5, leftLowerArm: 0.5, rightUpperArm: 0.5, rightLowerArm: 0.5,
+      leftUpperLeg: 0.5, leftLowerLeg: 0.5, rightUpperLeg: 0.5, rightLowerLeg: 0.5,
+      torso: 1.25,
+      rightGlove: 0.315, leftGlove: 0.315, rightSkate: 0.4375, leftSkate: 0.4375,
+      head: 0.35
+    };
+    const HEAD_MULTIPLIERS = { away: 1.5, senior: 3.0 };
+    const ANCHOR_DEFAULT = {
+      globalX: 0,
+      globalY: 0,
+      headAlongY: -0.1,
+      headOffX: 0,
+      skateAlong: 0.15,
+      legTighten: 0.18,
+      shoulderOverlap: 0.12,
+      shoulderShiftY: 0,
+      torsoPadX: 0.2,
+      torsoPadY: 0.8,
+      camHipShiftY: 0,
+      camMidShiftX: 0
+    };
+    const ANCHOR = { ...ANCHOR_DEFAULT };
+    // 2D compensation for a camera above the subject (downward view foreshortens legs in the image).
+    // Tune with sliders; set all stretches to 1 and width to 1 to disable.
+    const CAMERA_VIEW = { legStretch: 1.14, upperStretch: 1.05, bodyWidth: 1.06 };
+    const DEFAULTS = {
+      global: 1.0,
+      torso: 1.25,
+      arms: 0.5,
+      legs: 0.5,
+      headBase: 0.35,
+      headAway: 1.5,
+      headSenior: 3.0,
+      gloves: 0.315,
+      skates: 0.4375,
+      camLegStretch: 1.14,
+      camUpperStretch: 1.05,
+      camBodyWidth: 1.06
+    };
+
+    function degToRad(d) { return (d * Math.PI) / 180; }
+
+    function resize() {
+      viewW = window.innerWidth;
+      viewH = window.innerHeight;
+      if (displayLayout === 'vertical') {
+        canvas.width = viewH;
+        canvas.height = viewW;
+      } else {
+        canvas.width = viewW;
+        canvas.height = viewH;
+      }
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    function lerp(a, b, t) { return a + (b - a) * t; }
+    function dist(a, b) { return Math.hypot(b.x - a.x, b.y - a.y); }
+
+    function overheadCameraAnchors(lm, vw, vh) {
+      const vis = (j) => j && (j.visibility === undefined || j.visibility > 0.2);
+      const hipYL = vis(lm[23]) ? lm[23].y * vh : null;
+      const hipYR = vis(lm[24]) ? lm[24].y * vh : null;
+      let hipY = vh * 0.55;
+      if (hipYL != null && hipYR != null) hipY = (hipYL + hipYR) * 0.5;
+      else if (hipYL != null) hipY = hipYL;
+      else if (hipYR != null) hipY = hipYR;
+      let midX = vw * 0.5;
+      const lsN = lm[11], rsN = lm[12];
+      if (vis(lsN) && vis(rsN)) midX = ((1 - lsN.x) + (1 - rsN.x)) * 0.5 * vw;
+      else if (vis(lsN)) midX = (1 - lsN.x) * vw;
+      else if (vis(rsN)) midX = (1 - rsN.x) * vw;
+      return { hipY: hipY + ANCHOR.camHipShiftY, midX: midX + ANCHOR.camMidShiftX };
+    }
+
+    function applyOverheadCameraXY(x, y, hipY, midX) {
+      const { legStretch, upperStretch, bodyWidth } = CAMERA_VIEW;
+      let nx = x;
+      let ny = y;
+      if (legStretch !== 1 && ny > hipY) ny = hipY + (ny - hipY) * legStretch;
+      if (upperStretch !== 1 && ny < hipY) ny = hipY - (hipY - ny) * upperStretch;
+      if (bodyWidth !== 1) nx = midX + (nx - midX) * bodyWidth;
+      return { x: nx, y: ny };
+    }
+
+    function drawImageLimb(img, x1, y1, x2, y2, rotationOffsetDegrees, scaleMultiplier) {
+      if (!img || !img.complete) return;
+      const rotationOffset = degToRad(rotationOffsetDegrees || 0);
+      const angle = Math.atan2(y2 - y1, x2 - x1) + rotationOffset;
+      const length = dist({ x: x1, y: y1 }, { x: x2, y: y2 }) * (scaleMultiplier ?? 1);
+      const midX = (x1 + x2) / 2, midY = (y1 + y2) / 2;
+      const aspectRatio = img.width / img.height;
+      const width = length, height = width / aspectRatio;
+      ctx.save();
+      ctx.translate(midX, midY);
+      ctx.rotate(angle);
+      ctx.drawImage(img, -width / 2, -height / 2, width, height);
+      ctx.restore();
+    }
+
+    function drawImageAt(img, x, y, width, height, rotation) {
+      if (!img || !img.complete) return;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rotation || 0);
+      ctx.drawImage(img, -width / 2, -height / 2, width, height);
+      ctx.restore();
+    }
+
+    function drawTorsoImage(imgSet, lsX, lsY, rsX, rsY, lhX, lhY, rhX, rhY) {
+      if (!imgSet.torso || !imgSet.torso.complete) return;
+      const shoulderMidX = (lsX + rsX) / 2, shoulderMidY = (lsY + rsY) / 2;
+      const hipMidX = (lhX + rhX) / 2, hipMidY = (lhY + rhY) / 2;
+      const torsoAngle = Math.atan2(hipMidY - shoulderMidY, hipMidX - shoulderMidX);
+      const torsoLength = dist({ x: shoulderMidX, y: shoulderMidY }, { x: hipMidX, y: hipMidY }) * SCALE_MULTIPLIERS.torso;
+      const torsoMidX = (shoulderMidX + hipMidX) / 2, torsoMidY = (shoulderMidY + hipMidY) / 2;
+      const aspectRatio = imgSet.torso.width / imgSet.torso.height;
+      const width = torsoLength, height = width / aspectRatio;
+      drawImageAt(imgSet.torso, torsoMidX, torsoMidY, width, height, torsoAngle + degToRad(LIMB_ROTATIONS.torso));
+    }
+
+    const statusTextEl = document.getElementById('status-text');
+    const statusDotEl = document.getElementById('status-dot');
+    const hudEl = document.getElementById('hud');
+
+    function setStatus(msg, tracking) {
+      statusTextEl.textContent = msg;
+      statusDotEl.className = tracking ? 'tracking' : '';
+    }
+
+    function applyDisplayOrientation() {
+      const sideMode = displayLayout === 'vertical';
+      const transform = sideMode ? 'translate(-50%, -50%) rotate(270deg)' : 'none';
+      const top = sideMode ? '50%' : '0';
+      const left = sideMode ? '50%' : '0';
+      [canvas, hudEl].filter(Boolean).forEach((el) => {
+        el.style.transform = transform;
+        el.style.top = top;
+        el.style.left = left;
+        if (sideMode) {
+          el.style.width = '100vh';
+          el.style.height = '100vw';
+        } else {
+          el.style.width = '';
+          el.style.height = '';
+        }
+      });
+    }
+
+    function setArmScale(v) {
+      SCALE_MULTIPLIERS.leftUpperArm = v;
+      SCALE_MULTIPLIERS.leftLowerArm = v;
+      SCALE_MULTIPLIERS.rightUpperArm = v;
+      SCALE_MULTIPLIERS.rightLowerArm = v;
+    }
+
+    function setLegScale(v) {
+      SCALE_MULTIPLIERS.leftUpperLeg = v;
+      SCALE_MULTIPLIERS.leftLowerLeg = v;
+      SCALE_MULTIPLIERS.rightUpperLeg = v;
+      SCALE_MULTIPLIERS.rightLowerLeg = v;
+    }
+
+    function setGloveScale(v) {
+      SCALE_MULTIPLIERS.leftGlove = v;
+      SCALE_MULTIPLIERS.rightGlove = v;
+    }
+
+    function setSkateScale(v) {
+      SCALE_MULTIPLIERS.leftSkate = v;
+      SCALE_MULTIPLIERS.rightSkate = v;
+    }
+
+    function createSliderPanel() {
+      const panel = document.getElementById('slider-panel');
+      if (!panel) return;
+
+      const controls = [
+        { id: 'global', label: 'Global', min: 0.5, max: 2.5, step: 0.01, get: () => SCALE_MULTIPLIERS.global, set: (v) => { SCALE_MULTIPLIERS.global = v; } },
+        { id: 'torso', label: 'Torso', min: 0.5, max: 2.5, step: 0.01, get: () => SCALE_MULTIPLIERS.torso, set: (v) => { SCALE_MULTIPLIERS.torso = v; } },
+        { id: 'arms', label: 'Arms', min: 0.2, max: 2.0, step: 0.01, get: () => SCALE_MULTIPLIERS.leftUpperArm, set: setArmScale },
+        { id: 'legs', label: 'Legs', min: 0.2, max: 2.0, step: 0.01, get: () => SCALE_MULTIPLIERS.leftUpperLeg, set: setLegScale },
+        { id: 'headBase', label: 'Head Base', min: 0.1, max: 1.5, step: 0.01, get: () => SCALE_MULTIPLIERS.head, set: (v) => { SCALE_MULTIPLIERS.head = v; } },
+        { id: 'headAway', label: 'Head Away', min: 0.5, max: 4.0, step: 0.01, get: () => HEAD_MULTIPLIERS.away, set: (v) => { HEAD_MULTIPLIERS.away = v; } },
+        { id: 'headSenior', label: 'Head Senior', min: 0.5, max: 4.0, step: 0.01, get: () => HEAD_MULTIPLIERS.senior, set: (v) => { HEAD_MULTIPLIERS.senior = v; } },
+        { id: 'gloves', label: 'Gloves', min: 0.1, max: 2.0, step: 0.01, get: () => SCALE_MULTIPLIERS.leftGlove, set: setGloveScale },
+        { id: 'skates', label: 'Skates', min: 0.1, max: 2.0, step: 0.01, get: () => SCALE_MULTIPLIERS.leftSkate, set: setSkateScale },
+        { id: 'camLegStretch', label: 'Hi-cam leg stretch', min: 1, max: 1.5, step: 0.01, get: () => CAMERA_VIEW.legStretch, set: (v) => { CAMERA_VIEW.legStretch = v; } },
+        { id: 'camUpperStretch', label: 'Hi-cam upper stretch', min: 1, max: 1.35, step: 0.01, get: () => CAMERA_VIEW.upperStretch, set: (v) => { CAMERA_VIEW.upperStretch = v; } },
+        { id: 'camBodyWidth', label: 'Hi-cam body width', min: 1, max: 1.35, step: 0.01, get: () => CAMERA_VIEW.bodyWidth, set: (v) => { CAMERA_VIEW.bodyWidth = v; } }
+      ];
+
+      const anchorControls = [
+        { id: 'aGlobalX', label: 'Body offset X (px)', min: -250, max: 250, step: 1, digits: 0, get: () => ANCHOR.globalX, set: (v) => { ANCHOR.globalX = v; } },
+        { id: 'aGlobalY', label: 'Body offset Y (px)', min: -250, max: 250, step: 1, digits: 0, get: () => ANCHOR.globalY, set: (v) => { ANCHOR.globalY = v; } },
+        { id: 'aHeadAlong', label: 'Head anchor Y (× head size)', min: -0.35, max: 0.2, step: 0.01, get: () => ANCHOR.headAlongY, set: (v) => { ANCHOR.headAlongY = v; } },
+        { id: 'aHeadX', label: 'Head offset X (px)', min: -120, max: 120, step: 1, digits: 0, get: () => ANCHOR.headOffX, set: (v) => { ANCHOR.headOffX = v; } },
+        { id: 'aSkateAlong', label: 'Skate along ankle', min: 0, max: 0.4, step: 0.01, get: () => ANCHOR.skateAlong, set: (v) => { ANCHOR.skateAlong = v; } },
+        { id: 'aLegTighten', label: 'Leg inward pull', min: 0, max: 0.55, step: 0.01, get: () => ANCHOR.legTighten, set: (v) => { ANCHOR.legTighten = v; } },
+        { id: 'aShoulderOv', label: 'Shoulder arm overlap', min: 0, max: 0.35, step: 0.01, get: () => ANCHOR.shoulderOverlap, set: (v) => { ANCHOR.shoulderOverlap = v; } },
+        { id: 'aShoulderY', label: 'Shoulder Y (px)', min: -120, max: 120, step: 1, digits: 0, get: () => ANCHOR.shoulderShiftY, set: (v) => { ANCHOR.shoulderShiftY = v; } },
+        { id: 'aTorsoPadX', label: 'Torso fake hip ±X (× scale)', min: 0, max: 0.5, step: 0.01, get: () => ANCHOR.torsoPadX, set: (v) => { ANCHOR.torsoPadX = v; } },
+        { id: 'aTorsoPadY', label: 'Torso fake hip ±Y (× scale)', min: 0, max: 1.2, step: 0.01, get: () => ANCHOR.torsoPadY, set: (v) => { ANCHOR.torsoPadY = v; } },
+        { id: 'aCamHipY', label: 'Hi-cam hip pivot Y (px)', min: -120, max: 120, step: 1, digits: 0, get: () => ANCHOR.camHipShiftY, set: (v) => { ANCHOR.camHipShiftY = v; } },
+        { id: 'aCamMidX', label: 'Hi-cam mid X (px)', min: -120, max: 120, step: 1, digits: 0, get: () => ANCHOR.camMidShiftX, set: (v) => { ANCHOR.camMidShiftX = v; } }
+      ];
+
+      function fmtControl(c, v) {
+        return c.digits === 0 ? String(Math.round(v)) : v.toFixed(2);
+      }
+
+      let html = '<h3>Body Size Controls</h3>';
+      controls.forEach((c) => {
+        html += `
+          <div class="slider-row">
+            <label for="sl-${c.id}"><span>${c.label}</span><span id="val-${c.id}">${fmtControl(c, c.get())}</span></label>
+            <input id="sl-${c.id}" type="range" min="${c.min}" max="${c.max}" step="${c.step}" value="${c.get()}">
+          </div>
+        `;
+      });
+      html += '<h3 style="margin-top:12px">Anchors & placement</h3>';
+      anchorControls.forEach((c) => {
+        html += `
+          <div class="slider-row">
+            <label for="sl-${c.id}"><span>${c.label}</span><span id="val-${c.id}">${fmtControl(c, c.get())}</span></label>
+            <input id="sl-${c.id}" type="range" min="${c.min}" max="${c.max}" step="${c.step}" value="${c.get()}">
+          </div>
+        `;
+      });
+      html += `
+        <div class="slider-row">
+          <label for="jersey-mode"><span>Jersey Mode</span><span id="jersey-mode-label">Auto</span></label>
+          <select id="jersey-mode" aria-label="Jersey Mode" style="width:100%; background:#2a2a2a; color:#e8e0d8; border:1px solid rgba(201,168,108,0.45); border-radius:6px; padding:6px;">
+            <option value="auto">Auto (Color Detect)</option>
+            <option value="senior">Force Senior Jersey</option>
+            <option value="away">Force Away Jersey</option>
+          </select>
+        </div>
+        <div class="slider-row">
+          <label for="display-layout"><span>Display Layout</span><span id="display-layout-label">Fullscreen</span></label>
+          <select id="display-layout" aria-label="Display Layout" style="width:100%; background:#2a2a2a; color:#e8e0d8; border:1px solid rgba(201,168,108,0.45); border-radius:6px; padding:6px;">
+            <option value="fullscreen">Fullscreen</option>
+            <option value="vertical">Vertical (full screen)</option>
+          </select>
+        </div>
+        <div id="slider-actions">
+          <button id="reset-sliders">Reset</button>
+        </div>
+      `;
+      panel.innerHTML = html;
+
+      const layoutSelect = document.getElementById('display-layout');
+      const layoutLabel = document.getElementById('display-layout-label');
+      layoutSelect.value = displayLayout;
+      layoutSelect.addEventListener('change', (e) => {
+        displayLayout = e.target.value;
+        layoutLabel.textContent = displayLayout === 'vertical' ? 'Vertical (full screen)' : 'Fullscreen';
+        resize();
+        applyDisplayOrientation();
+      });
+
+      const modeSelect = document.getElementById('jersey-mode');
+      const modeLabel = document.getElementById('jersey-mode-label');
+      modeSelect.value = jerseyMode;
+      const jerseyLabels = { auto: 'Auto', senior: 'Senior', away: 'Away' };
+      modeSelect.addEventListener('change', (e) => {
+        jerseyMode = e.target.value;
+        modeLabel.textContent = jerseyLabels[jerseyMode] || 'Auto';
+      });
+
+      function bindSliderRows(list) {
+        list.forEach((c) => {
+          const slider = document.getElementById(`sl-${c.id}`);
+          const valueEl = document.getElementById(`val-${c.id}`);
+          slider.addEventListener('input', (e) => {
+            const v = parseFloat(e.target.value);
+            c.set(v);
+            valueEl.textContent = fmtControl(c, v);
+          });
+        });
+      }
+      bindSliderRows(controls);
+      bindSliderRows(anchorControls);
+
+      document.getElementById('reset-sliders').addEventListener('click', () => {
+        SCALE_MULTIPLIERS.global = DEFAULTS.global;
+        SCALE_MULTIPLIERS.torso = DEFAULTS.torso;
+        setArmScale(DEFAULTS.arms);
+        setLegScale(DEFAULTS.legs);
+        SCALE_MULTIPLIERS.head = DEFAULTS.headBase;
+        HEAD_MULTIPLIERS.away = DEFAULTS.headAway;
+        HEAD_MULTIPLIERS.senior = DEFAULTS.headSenior;
+        setGloveScale(DEFAULTS.gloves);
+        setSkateScale(DEFAULTS.skates);
+        CAMERA_VIEW.legStretch = DEFAULTS.camLegStretch;
+        CAMERA_VIEW.upperStretch = DEFAULTS.camUpperStretch;
+        CAMERA_VIEW.bodyWidth = DEFAULTS.camBodyWidth;
+        Object.assign(ANCHOR, ANCHOR_DEFAULT);
+        displayLayout = 'fullscreen';
+        layoutSelect.value = displayLayout;
+        layoutLabel.textContent = 'Fullscreen';
+        resize();
+        applyDisplayOrientation();
+        jerseyMode = 'auto';
+        modeSelect.value = jerseyMode;
+        modeLabel.textContent = 'Auto';
+        [...controls, ...anchorControls].forEach((c) => {
+          const slider = document.getElementById(`sl-${c.id}`);
+          const valueEl = document.getElementById(`val-${c.id}`);
+          const cur = c.get();
+          slider.value = cur;
+          valueEl.textContent = fmtControl(c, cur);
+        });
+      });
+    }
+
+    function initPose() {
+      poseDetector = new Pose({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`,
+      });
+      poseDetector.setOptions({
+        modelComplexity: 1,
+        smoothLandmarks: true,
+        minDetectionConfidence: 0.5,
+        minTrackingConfidence: 0.5,
+      });
+      poseDetector.onResults(onResults);
+
+      cameraUtil = new Camera(video, {
+        onFrame: async () => { await poseDetector.send({ image: video }); },
+        width: 640,
+        height: 480,
+      });
+      cameraUtil.start();
+      setStatus('Starting camera…', false);
+    }
+
+    function onResults(results) {
+      if (!results.poseLandmarks || results.poseLandmarks.length === 0) {
+        return;
+      }
+      const lm = results.poseLandmarks;
+      const vw = viewW;
+      const vh = viewH;
+      const { hipY, midX } = overheadCameraAnchors(lm, vw, vh);
+
+      const indices = [0, 7, 8, 11, 12, 13, 14, 15, 16, 23, 24, 25, 26, 27, 28];
+      indices.forEach((i) => {
+        const v = lm[i].visibility !== undefined ? lm[i].visibility : 1;
+        if (v < 0.2) {
+          jointTimeout[i] = (jointTimeout[i] || 0) + 1;
+          if (lastValid[i] && (jointTimeout[i] || 0) < MAX_TIMEOUT) {
+            joints[i] = { ...lastValid[i] };
+          }
+          return;
+        }
+        jointTimeout[i] = 0;
+        let x = (1 - lm[i].x) * vw;
+        let y = lm[i].y * vh;
+        const adj = applyOverheadCameraXY(x, y, hipY, midX);
+        x = adj.x;
+        y = adj.y;
+        lastValid[i] = { x, y };
+        if (!joints[i]) joints[i] = { x, y };
+        joints[i].x = lerp(joints[i].x, x, 1 - SMOOTHING);
+        joints[i].y = lerp(joints[i].y, y, 1 - SMOOTHING);
+      });
+
+      setStatus('Tracking', true);
+    }
+
+    function clampElbow(shoulder, elbow, wrist) {
+      if (!shoulder || !elbow || !wrist) return;
+      const dx = wrist.x - shoulder.x;
+      const dy = wrist.y - shoulder.y;
+      const len2 = dx * dx + dy * dy;
+      if (!len2) return;
+      const t = ((elbow.x - shoulder.x) * dx + (elbow.y - shoulder.y) * dy) / len2;
+      if (t < 0 || t > 1) {
+        const tt = Math.max(0.1, Math.min(0.9, t));
+        elbow.x = shoulder.x + dx * tt;
+        elbow.y = shoulder.y + dy * tt;
+      }
+    }
+
+    function enforceJointConstraints() {
+      const lh = joints[23], rh = joints[24];
+      const lk = joints[25], rk = joints[26];
+      const la = joints[27], ra = joints[28];
+      const ls = joints[11], rs = joints[12];
+      const le = joints[13], re = joints[14];
+      const lw = joints[15], rw = joints[16];
+      const eps = 6;
+      if (lh && lk && lk.y < lh.y + eps) lk.y = lh.y + eps;
+      if (lk && la && la.y < lk.y + eps) la.y = lk.y + eps;
+      if (rh && rk && rk.y < rh.y + eps) rk.y = rh.y + eps;
+      if (rk && ra && ra.y < rk.y + eps) ra.y = rk.y + eps;
+      clampElbow(ls, le, lw);
+      clampElbow(rs, re, rw);
+    }
+
+    function drawFrame() {
+      const W = canvas.width;
+      const H = canvas.height;
+      const vw = viewW;
+      const vh = viewH;
+      const viewCx = vw * 0.5;
+      const viewCy = vh * 0.5;
+
+      if (backgroundImg.complete && backgroundImg.naturalWidth > 0) {
+        const imgAspect = backgroundImg.naturalWidth / backgroundImg.naturalHeight;
+        const canvasAspect = W / H;
+        let drawW, drawH, offsetX, offsetY;
+        if (imgAspect > canvasAspect) {
+          drawH = H;
+          drawW = H * imgAspect;
+          offsetX = (W - drawW) / 2;
+          offsetY = 0;
+        } else {
+          drawW = W;
+          drawH = W / imgAspect;
+          offsetX = 0;
+          offsetY = (H - drawH) / 2;
+        }
+        ctx.drawImage(backgroundImg, offsetX, offsetY, drawW, drawH);
+      } else {
+        ctx.fillStyle = '#1a1a1a';
+        ctx.fillRect(0, 0, W, H);
+      }
+
+      ctx.save();
+      if (displayLayout === 'vertical') {
+        ctx.translate(W / 2, H / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.translate(-viewCx, -viewCy);
+      }
+
+      const head = joints[0];
+      const ls = joints[11], rs = joints[12];
+      const le = joints[13], re = joints[14], lw = joints[15], rw = joints[16];
+      const lh = joints[23], rh = joints[24];
+      const lk = joints[25], rk = joints[26], la = joints[27], ra = joints[28];
+
+      const hasPose = head || (ls && rs) || (lh && rh);
+      if (!hasPose) {
+        setStatus('Move into frame', false);
+        ctx.restore();
+        requestAnimationFrame(drawFrame);
+        return;
+      }
+
+      // Clamp leg joints to reduce impossible bending
+      enforceJointConstraints();
+
+      let blueRatio = 0;
+      if (video.readyState >= 2) {
+        if (++blueSampleSkip >= BLUE_SAMPLE_INTERVAL) {
+          blueSampleSkip = 0;
+          lastBlueRatio = sampleVideoForBlue(ls, rs, lh, rh, vw, vh);
+        }
+        blueRatio = lastBlueRatio;
+      }
+      blueDetected = blueRatio >= BLUE_THRESHOLD;
+      blueDetectedSmoothed = blueDetectedSmoothed + (blueDetected ? BLUE_SMOOTH : -BLUE_SMOOTH);
+      blueDetectedSmoothed = Math.max(0, Math.min(1, blueDetectedSmoothed));
+
+      let bodyScale = 80;
+      if (ls && rs) bodyScale = dist(ls, rs);
+      else if (lh && rh) bodyScale = dist(lh, rh) * 1.1;
+      bodyScale *= SCALE_MULTIPLIERS.global;
+
+      const imagesReady = loadedAway >= totalAway && loadedSenior >= totalSenior;
+      let imgSet;
+      if (jerseyMode === 'senior') {
+        imgSet = imagesSenior;
+      } else if (jerseyMode === 'away') {
+        imgSet = imagesAway;
+      } else {
+        imgSet = blueDetectedSmoothed > 0.08 ? imagesSenior : imagesAway;
+      }
+
+      if (imagesReady) {
+        if (displayLayout === 'vertical') {
+          ctx.save();
+          ctx.translate(viewCx, viewCy);
+          ctx.rotate(Math.PI / 2);
+          ctx.translate(-viewCx, -viewCy);
+        }
+        ctx.save();
+        ctx.translate(ANCHOR.globalX, ANCHOR.globalY);
+        const shy = ANCHOR.shoulderShiftY;
+        const lsY = ls ? ls.y + shy : null;
+        const rsY = rs ? rs.y + shy : null;
+        const legCenterX =
+          (lh && rh) ? (lh.x + rh.x) / 2 :
+          (lk && rk) ? (lk.x + rk.x) / 2 :
+          (la && ra) ? (la.x + ra.x) / 2 : vw * 0.5;
+        const inX = (x) => x + (legCenterX - x) * ANCHOR.legTighten;
+        const lhX = lh ? inX(lh.x) : null;
+        const rhX = rh ? inX(rh.x) : null;
+        const lkX = lk ? inX(lk.x) : null;
+        const rkX = rk ? inX(rk.x) : null;
+        const laX = la ? inX(la.x) : null;
+        const raX = ra ? inX(ra.x) : null;
+
+        // Skates first (under legs)
+        if (la && imgSet.rightSkate) {
+          const ankleAngle = lk ? Math.atan2(la.y - lk.y, laX - lkX) : 0;
+          const skateSize = bodyScale * SCALE_MULTIPLIERS.rightSkate;
+          let skateX = laX, skateY = la.y;
+          if (lk) {
+            const offset = dist(lk, la) * ANCHOR.skateAlong;
+            skateX = laX + Math.cos(ankleAngle) * offset;
+            skateY = la.y + Math.sin(ankleAngle) * offset;
+          }
+          drawImageAt(imgSet.rightSkate, skateX, skateY, skateSize, skateSize, ankleAngle + degToRad(LIMB_ROTATIONS.rightSkate));
+        }
+        if (ra && imgSet.leftSkate) {
+          const ankleAngle = rk ? Math.atan2(ra.y - rk.y, raX - rkX) : 0;
+          const skateSize = bodyScale * SCALE_MULTIPLIERS.leftSkate;
+          let skateX = raX, skateY = ra.y;
+          if (rk) {
+            const offset = dist(rk, ra) * ANCHOR.skateAlong;
+            skateX = raX + Math.cos(ankleAngle) * offset;
+            skateY = ra.y + Math.sin(ankleAngle) * offset;
+          }
+          drawImageAt(imgSet.leftSkate, skateX, skateY, skateSize, skateSize, ankleAngle + degToRad(LIMB_ROTATIONS.leftSkate));
+        }
+
+        if (lk && la && imgSet.leftLowerLeg) drawImageLimb(imgSet.leftLowerLeg, lkX, lk.y, laX, la.y, LIMB_ROTATIONS.leftLowerLeg, SCALE_MULTIPLIERS.leftLowerLeg);
+        if (rk && ra && imgSet.rightLowerLeg) drawImageLimb(imgSet.rightLowerLeg, rkX, rk.y, raX, ra.y, LIMB_ROTATIONS.rightLowerLeg, SCALE_MULTIPLIERS.rightLowerLeg);
+        if (lh && lk && imgSet.leftUpperLeg) drawImageLimb(imgSet.leftUpperLeg, lhX, lh.y, lkX, lk.y, LIMB_ROTATIONS.leftUpperLeg, SCALE_MULTIPLIERS.leftUpperLeg);
+        if (rh && rk && imgSet.rightUpperLeg) drawImageLimb(imgSet.rightUpperLeg, rhX, rh.y, rkX, rk.y, LIMB_ROTATIONS.rightUpperLeg, SCALE_MULTIPLIERS.rightUpperLeg);
+
+        // Torso
+        if (imgSet.torso && ls && rs && lh && rh && lsY != null && rsY != null) {
+          drawTorsoImage(imgSet, ls.x, lsY, rs.x, rsY, lh.x, lh.y, rh.x, rh.y);
+        } else if (imgSet.torso && ls && rs && lsY != null && rsY != null) {
+          const shoulderMidY = (lsY + rsY) / 2, shoulderMidX = (ls.x + rs.x) / 2;
+          const padX = bodyScale * ANCHOR.torsoPadX;
+          const padY = bodyScale * ANCHOR.torsoPadY;
+          drawTorsoImage(imgSet, ls.x, lsY, rs.x, rsY, shoulderMidX - padX, shoulderMidY + padY, shoulderMidX + padX, shoulderMidY + padY);
+        } else if (imgSet.torso && lh && rh) {
+          const hipMidY = (lh.y + rh.y) / 2, hipMidX = (lh.x + rh.x) / 2;
+          const padX = bodyScale * ANCHOR.torsoPadX;
+          const padY = bodyScale * ANCHOR.torsoPadY;
+          drawTorsoImage(imgSet, hipMidX - padX, hipMidY - padY, hipMidX + padX, hipMidY - padY, lh.x, lh.y, rh.x, rh.y);
+        }
+
+        // Arms — left
+        if (ls && le && imgSet.leftUpperArm && lsY != null) {
+          let extX = ls.x, extY = lsY;
+          if (rs && rsY != null) {
+            const smx = (ls.x + rs.x) / 2, smy = (lsY + rsY) / 2;
+            const overlapDist = dist({ x: ls.x, y: lsY }, le) * ANCHOR.shoulderOverlap;
+            const dx = smx - ls.x, dy = smy - lsY;
+            const d = Math.hypot(dx, dy) || 1;
+            extX = ls.x - (dx / d) * overlapDist;
+            extY = lsY - (dy / d) * overlapDist;
+          }
+          drawImageLimb(imgSet.leftUpperArm, extX, extY, le.x, le.y, LIMB_ROTATIONS.leftUpperArm, SCALE_MULTIPLIERS.leftUpperArm);
+        }
+        if (le && lw && imgSet.leftLowerArm) drawImageLimb(imgSet.leftLowerArm, le.x, le.y, lw.x, lw.y, LIMB_ROTATIONS.leftLowerArm, SCALE_MULTIPLIERS.leftLowerArm);
+        if (lw && imgSet.rightGlove) {
+          const wristAngle = le ? Math.atan2(lw.y - le.y, lw.x - le.x) : 0;
+          drawImageAt(imgSet.rightGlove, lw.x, lw.y, bodyScale * SCALE_MULTIPLIERS.rightGlove, bodyScale * SCALE_MULTIPLIERS.rightGlove, wristAngle + degToRad(LIMB_ROTATIONS.rightGlove));
+        }
+
+        // Arms — right
+        if (rs && re && imgSet.rightUpperArm && rsY != null) {
+          let extX = rs.x, extY = rsY;
+          if (ls && lsY != null) {
+            const smx = (ls.x + rs.x) / 2, smy = (lsY + rsY) / 2;
+            const overlapDist = dist({ x: rs.x, y: rsY }, re) * ANCHOR.shoulderOverlap;
+            const dx = smx - rs.x, dy = smy - rsY;
+            const d = Math.hypot(dx, dy) || 1;
+            extX = rs.x - (dx / d) * overlapDist;
+            extY = rsY - (dy / d) * overlapDist;
+          }
+          drawImageLimb(imgSet.rightUpperArm, extX, extY, re.x, re.y, LIMB_ROTATIONS.rightUpperArm, SCALE_MULTIPLIERS.rightUpperArm);
+        }
+        if (re && rw && imgSet.rightLowerArm) drawImageLimb(imgSet.rightLowerArm, re.x, re.y, rw.x, rw.y, LIMB_ROTATIONS.rightLowerArm, SCALE_MULTIPLIERS.rightLowerArm);
+        if (rw && imgSet.leftGlove) {
+          const wristAngle = re ? Math.atan2(rw.y - re.y, rw.x - re.x) : 0;
+          drawImageAt(imgSet.leftGlove, rw.x, rw.y, bodyScale * SCALE_MULTIPLIERS.leftGlove, bodyScale * SCALE_MULTIPLIERS.leftGlove, wristAngle + degToRad(LIMB_ROTATIONS.leftGlove));
+        }
+
+        // Head — use nose landmark (0) as anchor
+        if (head && imgSet.head) {
+          let headSize = bodyScale * SCALE_MULTIPLIERS.head;
+          if (imgSet === imagesAway) {
+            headSize *= HEAD_MULTIPLIERS.away;
+          } else if (imgSet === imagesSenior) {
+            headSize *= HEAD_MULTIPLIERS.senior;
+          }
+          drawImageAt(imgSet.head, head.x + ANCHOR.headOffX, head.y + headSize * ANCHOR.headAlongY, headSize, headSize, 0);
+        }
+        ctx.restore();
+        if (displayLayout === 'vertical') {
+          ctx.restore();
+        }
+      }
+
+      if (blueDetectedSmoothed > 0.08) {
+        const alpha = blueDetectedSmoothed;
+        const cx = viewCx;
+        const cy = viewCy;
+        const overlaySize = Math.max(vw, vh) * 0.9;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        if (blueOverlayImg.complete && blueOverlayImg.naturalWidth > 0) {
+          ctx.drawImage(blueOverlayImg, cx - overlaySize * 0.5, cy - overlaySize * 0.5, overlaySize, overlaySize);
+        } else {
+          ctx.globalAlpha = alpha * 0.5;
+          ctx.fillStyle = '#61a1d5';
+          ctx.fillRect(0, 0, vw, vh);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = 'rgba(255,255,255,0.3)';
+          ctx.font = '24px "Space Mono"';
+          ctx.textAlign = 'center';
+          ctx.fillText('Blue detected — add blue-overlay.png for custom image', cx, cy);
+        }
+        ctx.restore();
+      }
+
+      ctx.restore();
+      requestAnimationFrame(drawFrame);
+    }
+
+    document.getElementById('start-btn').addEventListener('click', () => {
+      document.getElementById('splash').classList.add('hidden');
+      setTimeout(() => { document.getElementById('splash').style.display = 'none'; }, 700);
+      setStatus('Starting…', false);
+      initPose();
+      requestAnimationFrame(drawFrame);
+    });
+    applyDisplayOrientation();
+    createSliderPanel();
+
+    const sliderPanelEl = document.getElementById('slider-panel');
+    document.addEventListener('keydown', (e) => {
+      if (e.code !== 'Space') return;
+      const el = e.target;
+      if (el && el.tagName === 'BUTTON') return;
+      if (el && el.tagName === 'TEXTAREA') return;
+      if (el && el.tagName === 'SELECT') return;
+      if (el && el.tagName === 'INPUT') {
+        const t = (el.type || '').toLowerCase();
+        if (t === 'text' || t === 'search' || t === 'email' || t === 'password' || t === 'url' || t === 'number' || t === 'tel') return;
+      }
+      e.preventDefault();
+      sliderPanelEl.classList.toggle('panel-hidden');
+    });
+  </script>
+</body>
+</html>
