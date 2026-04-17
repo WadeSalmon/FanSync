@@ -246,8 +246,12 @@
 
     // Blue color tracking (#61a1d5) for jersey switching (no on-screen blue overlay)
     const BLUE_TARGET = { r: 97, g: 161, b: 213 }; // #61a1d5
-    const BLUE_TOLERANCE = 95;   // max RGB distance to count as "blue"
-    const BLUE_THRESHOLD = 0.015; // fraction of sampled pixels that must be blue to trigger (1.5%)
+    const BLUE_TOLERANCE = 115;   // slightly wider for webcams with different color pipelines (e.g. RealSense)
+    const BLUE_THRESHOLD = 0.010; // fraction of sampled pixels that must be blue to trigger (1.0%)
+    const BLUE_HUE_MIN = 185;
+    const BLUE_HUE_MAX = 235;
+    const BLUE_MIN_SAT = 0.14;    // allow less saturated blue under auto white-balance
+    const BLUE_MIN_VAL = 0.12;    // ignore very dark noise
     let blueDetected = false;
     let blueDetectedSmoothed = 0;
     let lastBlueRatio = 0;
@@ -258,9 +262,31 @@
     let colorSampleCanvas, colorSampleCtx;
     const SAMPLE_SIZE = 80;    // sample grid 80x80 for speed
 
+    function rgbToHsv(r, g, b) {
+      const rn = r / 255, gn = g / 255, bn = b / 255;
+      const max = Math.max(rn, gn, bn), min = Math.min(rn, gn, bn);
+      const d = max - min;
+      let h = 0;
+      if (d !== 0) {
+        if (max === rn) h = ((gn - bn) / d) % 6;
+        else if (max === gn) h = (bn - rn) / d + 2;
+        else h = (rn - gn) / d + 4;
+        h *= 60;
+        if (h < 0) h += 360;
+      }
+      const s = max === 0 ? 0 : d / max;
+      const v = max;
+      return { h, s, v };
+    }
+
     function isBlueLike(r, g, b) {
       const dr = r - BLUE_TARGET.r, dg = g - BLUE_TARGET.g, db = b - BLUE_TARGET.b;
-      return dr * dr + dg * dg + db * db <= BLUE_TOL_SQ;
+      const rgbMatch = dr * dr + dg * dg + db * db <= BLUE_TOL_SQ;
+      const { h, s, v } = rgbToHsv(r, g, b);
+      const hueMatch = h >= BLUE_HUE_MIN && h <= BLUE_HUE_MAX;
+      const hsvMatch = hueMatch && s >= BLUE_MIN_SAT && v >= BLUE_MIN_VAL;
+      // Blend both checks: RGB keeps your original color anchor, HSV handles camera color shifts better.
+      return rgbMatch || hsvMatch;
     }
 
     // Joints are in viewport pixels (innerWidth × innerHeight)
