@@ -244,13 +244,10 @@
     let jerseyMode = 'auto'; // 'auto' | 'senior' | 'away'
     let displayLayout = 'fullscreen'; // 'fullscreen' | 'vertical'
 
-    // Blue color tracking (#61a1d5) — overlay when similar blue is detected
+    // Blue color tracking (#61a1d5) for jersey switching (no on-screen blue overlay)
     const BLUE_TARGET = { r: 97, g: 161, b: 213 }; // #61a1d5
     const BLUE_TOLERANCE = 95;   // max RGB distance to count as "blue"
     const BLUE_THRESHOLD = 0.015; // fraction of sampled pixels that must be blue to trigger (1.5%)
-    const blueOverlayImg = new Image();
-    blueOverlayImg.crossOrigin = 'anonymous';
-    blueOverlayImg.src = 'blue-overlay.png';
     let blueDetected = false;
     let blueDetectedSmoothed = 0;
     let lastBlueRatio = 0;
@@ -944,28 +941,6 @@
         if (displayLayout === 'vertical') {
           ctx.restore();
         }
-      }
-
-      if (blueDetectedSmoothed > 0.08) {
-        const alpha = blueDetectedSmoothed;
-        const cx = viewCx;
-        const cy = viewCy;
-        const overlaySize = Math.max(vw, vh) * 0.9;
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        if (blueOverlayImg.complete && blueOverlayImg.naturalWidth > 0) {
-          ctx.drawImage(blueOverlayImg, cx - overlaySize * 0.5, cy - overlaySize * 0.5, overlaySize, overlaySize);
-        } else {
-          ctx.globalAlpha = alpha * 0.5;
-          ctx.fillStyle = '#61a1d5';
-          ctx.fillRect(0, 0, vw, vh);
-          ctx.globalAlpha = 1;
-          ctx.fillStyle = 'rgba(255,255,255,0.3)';
-          ctx.font = '24px "Space Mono"';
-          ctx.textAlign = 'center';
-          ctx.fillText('Blue detected — add blue-overlay.png for custom image', cx, cy);
-        }
-        ctx.restore();
       }
 
       ctx.restore();
