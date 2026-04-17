@@ -256,11 +256,13 @@
     let blueDetectedSmoothed = 0;
     let blueDetectedHeld = false;
     let bluePresentSinceMs = 0;
+    let awayLockUntilMs = 0;
     let lastBlueRatio = 0;
     let blueSampleSkip = 0;
     const BLUE_SMOOTH = 0.2;
     const BLUE_SAMPLE_INTERVAL = 4;
     const BLUE_HOLD_MS = 2000; // require 2s of continuous blue before switching
+    const AWAY_MIN_HOLD_MS = 5000; // once triggered, keep away jersey for at least 5s
     const BLUE_TOL_SQ = BLUE_TOLERANCE * BLUE_TOLERANCE;
     let usingIntelCamera = false;
     let colorSampleCanvas, colorSampleCtx;
@@ -846,12 +848,17 @@
       blueDetectedSmoothed = blueDetectedSmoothed + (blueDetected ? BLUE_SMOOTH : -BLUE_SMOOTH);
       blueDetectedSmoothed = Math.max(0, Math.min(1, blueDetectedSmoothed));
       const nowMs = performance.now();
-      if (blueDetectedSmoothed > 0.08) {
+      const awayLockActive = nowMs < awayLockUntilMs;
+      if (!awayLockActive && blueDetectedSmoothed > 0.08) {
         if (!bluePresentSinceMs) bluePresentSinceMs = nowMs;
       } else {
         bluePresentSinceMs = 0;
       }
-      blueDetectedHeld = !!bluePresentSinceMs && (nowMs - bluePresentSinceMs >= BLUE_HOLD_MS);
+      blueDetectedHeld = !awayLockActive && !!bluePresentSinceMs && (nowMs - bluePresentSinceMs >= BLUE_HOLD_MS);
+      if (blueDetectedHeld) {
+        awayLockUntilMs = nowMs + AWAY_MIN_HOLD_MS;
+      }
+      const useAwayAuto = awayLockActive || blueDetectedHeld;
 
       let bodyScale = 80;
       if (ls && rs) bodyScale = dist(ls, rs);
@@ -865,7 +872,7 @@
       } else if (jerseyMode === 'away') {
         imgSet = imagesAway;
       } else {
-        imgSet = blueDetectedHeld ? imagesAway : imagesSenior;
+        imgSet = useAwayAuto ? imagesAway : imagesSenior;
       }
 
       if (imagesReady) {
