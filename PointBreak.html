@@ -254,11 +254,15 @@
     const BLUE_MIN_VAL = 0.12;    // ignore very dark noise
     let blueDetected = false;
     let blueDetectedSmoothed = 0;
+    let blueDetectedHeld = false;
+    let bluePresentSinceMs = 0;
     let lastBlueRatio = 0;
     let blueSampleSkip = 0;
     const BLUE_SMOOTH = 0.2;
     const BLUE_SAMPLE_INTERVAL = 4;
+    const BLUE_HOLD_MS = 2000; // require 2s of continuous blue before switching
     const BLUE_TOL_SQ = BLUE_TOLERANCE * BLUE_TOLERANCE;
+    let usingIntelCamera = false;
     let colorSampleCanvas, colorSampleCtx;
     const SAMPLE_SIZE = 80;    // sample grid 80x80 for speed
 
@@ -287,6 +291,15 @@
       const hsvMatch = hueMatch && s >= BLUE_MIN_SAT && v >= BLUE_MIN_VAL;
       // Blend both checks: RGB keeps your original color anchor, HSV handles camera color shifts better.
       return rgbMatch || hsvMatch;
+    }
+
+    function refreshCameraProfile() {
+      const stream = video.srcObject;
+      if (!stream || !stream.getVideoTracks) return;
+      const track = stream.getVideoTracks()[0];
+      if (!track) return;
+      const label = String(track.label || '').toLowerCase();
+      usingIntelCamera = label.includes('intel') || label.includes('realsense');
     }
 
     // Joints are in viewport pixels (innerWidth × innerHeight)
@@ -322,11 +335,11 @@
       const torsoHeight = Math.max(hipY - shoulderY, 1e-6);
       const midX = (sLs.x + sRs.x) * 0.5;
       const shoulderSpan = Math.abs(sRs.x - sLs.x);
-      const halfW = Math.max(3, shoulderSpan * 0.18);
+      const halfW = Math.max(3, shoulderSpan * (usingIntelCamera ? 0.12 : 0.18));
       const minSx = Math.max(0, Math.floor(midX - halfW));
       const maxSx = Math.min(SAMPLE_SIZE - 1, Math.ceil(midX + halfW));
-      const y0 = shoulderY + torsoHeight * 0.06;
-      const y1 = shoulderY + torsoHeight * 0.28;
+      const y0 = shoulderY + torsoHeight * (usingIntelCamera ? 0.10 : 0.06);
+      const y1 = shoulderY + torsoHeight * (usingIntelCamera ? 0.24 : 0.28);
       const minSy = Math.max(0, Math.floor(y0));
       const maxSy = Math.min(SAMPLE_SIZE - 1, Math.ceil(y1));
       if (minSx > maxSx || minSy > maxSy) return 0;
@@ -822,6 +835,7 @@
 
       let blueRatio = 0;
       if (video.readyState >= 2) {
+        refreshCameraProfile();
         if (++blueSampleSkip >= BLUE_SAMPLE_INTERVAL) {
           blueSampleSkip = 0;
           lastBlueRatio = sampleVideoForBlue(ls, rs, lh, rh, vw, vh);
@@ -831,6 +845,13 @@
       blueDetected = blueRatio >= BLUE_THRESHOLD;
       blueDetectedSmoothed = blueDetectedSmoothed + (blueDetected ? BLUE_SMOOTH : -BLUE_SMOOTH);
       blueDetectedSmoothed = Math.max(0, Math.min(1, blueDetectedSmoothed));
+      const nowMs = performance.now();
+      if (blueDetectedSmoothed > 0.08) {
+        if (!bluePresentSinceMs) bluePresentSinceMs = nowMs;
+      } else {
+        bluePresentSinceMs = 0;
+      }
+      blueDetectedHeld = !!bluePresentSinceMs && (nowMs - bluePresentSinceMs >= BLUE_HOLD_MS);
 
       let bodyScale = 80;
       if (ls && rs) bodyScale = dist(ls, rs);
@@ -844,7 +865,7 @@
       } else if (jerseyMode === 'away') {
         imgSet = imagesAway;
       } else {
-        imgSet = blueDetectedSmoothed > 0.08 ? imagesAway : imagesSenior;
+        imgSet = blueDetectedHeld ? imagesAway : imagesSenior;
       }
 
       if (imagesReady) {
