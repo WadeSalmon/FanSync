@@ -332,7 +332,7 @@
       });
     }
 
-    // Load both sets: Away is default, Senior appears when blue detected
+    // Load both sets: Senior is default, Away appears when blue is detected
     loadImageSet(imagePathsAway, imagesAway, () => { loadedAway++; });
     loadImageSet(imagePathsSenior, imagesSenior, () => { loadedSenior++; });
 
@@ -821,7 +821,7 @@
       } else if (jerseyMode === 'away') {
         imgSet = imagesAway;
       } else {
-        imgSet = blueDetectedSmoothed > 0.08 ? imagesSenior : imagesAway;
+        imgSet = blueDetectedSmoothed > 0.08 ? imagesAway : imagesSenior;
       }
 
       if (imagesReady) {
